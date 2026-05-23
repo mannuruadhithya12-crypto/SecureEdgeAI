@@ -5,7 +5,7 @@ import tensorflow as tf
 # Resolve model path relative to this script so it works from any CWD
 model_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'recognition', 'mobilefacenet.tflite'))
 if not os.path.exists(model_path):
-	raise FileNotFoundError(f"TFLite model not found: {model_path}")
+    raise FileNotFoundError(f"TFLite model not found: {model_path}")
 
 # Load model
 interpreter = tf.lite.Interpreter(model_path=model_path)
