@@ -1,4 +1,25 @@
-This is a new [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
+# SecureEdgeAI
+
+Offline AI-powered facial recognition and liveness detection system designed for remote workforce authentication in zero-network environments.
+
+## Features
+- Offline Face Recognition
+- Liveness Detection
+- Edge AI Optimization
+- AWS Sync Mechanism
+- React Native Cross-Platform Support
+
+## Tech Stack
+- React Native
+- TensorFlow Lite
+- MobileFaceNet
+- BlazeFace
+- SQLite
+- AWS
+
+---
+
+This is a [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
 
 # Getting Started
 
