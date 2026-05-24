@@ -29,7 +29,7 @@ function rotationForFrame(orientation: string): '0deg' | '90deg' | '180deg' | '2
 export function useFaceDetectionFrameProcessor(
   modelBox: BoxedHybridObject<TfliteModel> | undefined,
   onFaceDetected: (face: FaceDetection | null) => void,
-  fps: number = 5
+  fps: number = 10
 ) {
   const { resize } = useMemo(() => createResizePlugin(), []);
   const reportFace = useRunOnJS(onFaceDetected);
@@ -44,7 +44,7 @@ export function useFaceDetectionFrameProcessor(
         const model = modelBox.unbox();
         const rotation = rotationForFrame(frame.orientation);
 
-        // 1. Resize & Preprocess
+        // 1. Resize & Preprocess (uint8 for stability)
         const resized = resize(frame, {
           scale: {
             width: 128,
@@ -52,19 +52,27 @@ export function useFaceDetectionFrameProcessor(
           },
           rotation,
           pixelFormat: 'rgb',
-          dataType: 'float32',
+          dataType: 'uint8',
         });
+        console.log("Frame resize successful");
 
-        // 2. Run Inference with Logs
+        // 2. Manual normalization to float32
+        const float32Data = new Float32Array(resized.length);
+        for (let i = 0; i < resized.length; i++) {
+          float32Data[i] = resized[i] / 255.0;
+        }
+        console.log("Tensor normalization successful");
+
+        // 3. Run Inference
         console.log("Running BlazeFace inference");
-        const outputs = model.runSync([resized.buffer as ArrayBuffer]);
+        const outputs = model.runSync([float32Data.buffer as ArrayBuffer]);
         console.log("BlazeFace inference executed");
         console.log(outputs);
 
-        // 3. Parse & Filter
+        // 4. Parse & Filter
         const face = processBlazeFaceOutput(outputs);
 
-        // 4. Report results
+        // 5. Report results
         reportFace(face);
       } catch (error) {
         console.error('[FrameProcessor] Inference failed:', error);

@@ -31,7 +31,7 @@ export const CameraView: React.FC = () => {
     (face) => {
       setDetection(face);
     },
-    5
+    10
   );
 
   if (!hasPermission) return <View style={styles.container}><Text>No Camera Permission</Text></View>;
@@ -44,7 +44,9 @@ export const CameraView: React.FC = () => {
         device={device}
         isActive={true}
         pixelFormat="yuv"
+        outputOrientation="device"
         frameProcessor={frameProcessor}
+        frameProcessorFps={10}
       />
 
       {/* Realtime Face Overlay */}
