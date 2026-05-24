@@ -2,8 +2,16 @@ import os
 import numpy as np
 import tensorflow as tf
 
-# Resolve model path relative to this script so it works from any CWD
-model_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'recognition', 'mobilefacenet.tflite'))
+repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+model_path = os.path.join(
+    repo_root,
+    'mobile-app',
+    'SecureEdgeMobile',
+    'src',
+    'assets',
+    'models',
+    'mobilefacenet.tflite',
+)
 if not os.path.exists(model_path):
     raise FileNotFoundError(f"TFLite model not found: {model_path}")
 

@@ -2,6 +2,8 @@
 
 Offline AI-powered facial recognition and liveness detection system designed for remote workforce authentication in zero-network environments.
 
+This folder contains the React Native mobile app. Repository-level Python model tooling, setup scripts, and model validation tests live at the repository root.
+
 ## Features
 - Offline Face Recognition
 - Liveness Detection
@@ -16,6 +18,20 @@ Offline AI-powered facial recognition and liveness detection system designed for
 - BlazeFace
 - SQLite
 - AWS
+
+## Mobile App Layout
+
+- `App.tsx` - current VisionCamera, Worklets, Nitro, and TFLite integration entry point.
+- `src/assets/models/` - the only app-bundled TFLite model location.
+- `android/` and `ios/` - native React Native projects.
+
+Run mobile commands from this directory:
+
+```sh
+npm install
+npm start
+npm run android
+```
 
 ---
 

@@ -10,6 +10,7 @@ __pycache__/
 *.pyo
 *.pyd
 .Python
+*.npy
 build/
 develop-eggs/
 dist/
@@ -171,6 +172,7 @@ vite.config.ts.timestamp-*
 .vite/
 
 # Android/React Native
+.idea/
 .gradle/
 **/android/app/build/
 **/android/build/
@@ -183,3 +185,7 @@ vite.config.ts.timestamp-*
 **/ios/DerivedData/
 *.swp
 *.DS_Store
+
+# Keep app-bundled TFLite models in src/assets/models so Metro can resolve them.
+**/android/app/src/main/assets/*.tflite
+**/ai-models/recognition/embeddings/*.npy
