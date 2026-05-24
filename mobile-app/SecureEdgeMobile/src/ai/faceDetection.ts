@@ -108,15 +108,12 @@ export function processBlazeFaceOutput(
 ): FaceDetection | null {
   'worklet';
   if (outputs.length < 2) {
-    console.warn(`[BlazeFace] Expected 2 outputs, got ${outputs.length}`);
+    console.warn(`[BlazeFace] Expected 2 outputs (regressors, classificators), got ${outputs.length}`);
     return null;
   }
 
   const rawBoxes = outputs[0];
   const rawScores = outputs[1];
-
-  // Debug logs for tensor shapes/sizes
-  console.log(`[BlazeFace] Box tensor size: ${rawBoxes.byteLength}, Score tensor size: ${rawScores.byteLength}`);
 
   const isFloat32 = rawBoxes.byteLength % 4 === 0;
   const numAnchors = anchors.length; // 896
@@ -137,14 +134,14 @@ export function processBlazeFaceOutput(
   for (let i = 0; i < numAnchors; i++) {
     let score = isFloat32 ? (scores as Float32Array)[i] : (scores as Uint8Array)[i] / 255;
 
-    // MediaPipe BlazeFace often uses raw logits for scores
+    // Sigmoid for scores
     if (score < -20) score = 0;
     else if (score > 20) score = 1;
     else score = 1.0 / (1.0 + Math.exp(-score));
 
     if (score > BLAZEFACE_CONFIG.scoreThreshold) {
       const anchor = anchors[i];
-      const offset = i * 16; // 16 values: 4 for box, 12 for landmarks (6 pts)
+      const offset = i * 16; // 16 values: 4 for box, 12 for landmarks
 
       let ty, tx, th, tw;
       if (isFloat32) {
@@ -161,6 +158,7 @@ export function processBlazeFaceOutput(
         tw = (b[offset + 3] - 128) / 128.0;
       }
 
+      // Box decoding (SSD format)
       const xCenter = (tx / 128.0) * anchor.w + anchor.xCenter;
       const yCenter = (ty / 128.0) * anchor.h + anchor.yCenter;
       const w = (tw / 128.0) * anchor.w;
@@ -177,5 +175,11 @@ export function processBlazeFaceOutput(
   }
 
   const filtered = nonMaximumSuppression(detections);
-  return filtered.length > 0 ? filtered[0] : null;
+  const result = filtered.length > 0 ? filtered[0] : null;
+
+  if (result) {
+    console.log("Face detected:", result);
+  }
+
+  return result;
 }

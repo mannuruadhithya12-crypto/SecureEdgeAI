@@ -45,7 +45,6 @@ export function useFaceDetectionFrameProcessor(
         const rotation = rotationForFrame(frame.orientation);
 
         // 1. Resize & Preprocess
-        // BlazeFace expects 128x128 RGB
         const resized = resize(frame, {
           scale: {
             width: 128,
@@ -56,8 +55,11 @@ export function useFaceDetectionFrameProcessor(
           dataType: 'float32',
         });
 
-        // 2. Run Inference
+        // 2. Run Inference with Logs
+        console.log("Running BlazeFace inference");
         const outputs = model.runSync([resized.buffer as ArrayBuffer]);
+        console.log("BlazeFace inference executed");
+        console.log(outputs);
 
         // 3. Parse & Filter
         const face = processBlazeFaceOutput(outputs);
