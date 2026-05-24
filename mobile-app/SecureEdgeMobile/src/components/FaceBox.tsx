@@ -47,7 +47,7 @@ export const FaceBox: React.FC<FaceBoxProps> = React.memo(({ detection }) => {
     >
       <View style={styles.labelContainer}>
         <Text style={styles.labelText}>
-          Face ${Math.round(detection.confidence * 100)}%
+          Face {Math.round(detection.confidence * 100)}%
         </Text>
       </View>
     </View>
