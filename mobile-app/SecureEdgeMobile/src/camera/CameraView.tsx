@@ -9,6 +9,7 @@ import { useTensorflowModel } from 'react-native-fast-tflite';
 import { NitroModules } from 'react-native-nitro-modules';
 import { useFaceDetectionFrameProcessor } from './FrameProcessor';
 import { type FaceDetection } from '../ai/faceDetection';
+import { FaceBox } from '../components/FaceBox';
 
 const BLAZEFACE_FRONT = require('../assets/models/blazeface_front.tflite');
 
@@ -30,7 +31,7 @@ export const CameraView: React.FC = () => {
     (face) => {
       setDetection(face);
     },
-    5
+    10
   );
 
   if (!hasPermission) return <View style={styles.container}><Text>No Camera Permission</Text></View>;
@@ -43,16 +44,14 @@ export const CameraView: React.FC = () => {
         device={device}
         isActive={true}
         pixelFormat="yuv"
+        outputOrientation="device"
         frameProcessor={frameProcessor}
+        frameProcessorFps={10}
       />
-      {detection && (
-        <View style={styles.overlay}>
-          <Text style={styles.detectionText}>
-            Face Detected: {Math.round(detection.confidence * 100)}%
-            \nPos: {detection.x.toFixed(2)}, {detection.y.toFixed(2)}
-          </Text>
-        </View>
-      )}
+
+      {/* Realtime Face Overlay */}
+      <FaceBox detection={detection} />
+
       {model.state === 'loading' && (
         <View style={styles.overlay}>
           <Text style={styles.statusText}>Loading BlazeFace...</Text>
@@ -75,11 +74,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.5)',
     padding: 10,
     borderRadius: 8,
-  },
-  detectionText: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: 'bold',
+    alignItems: 'center',
   },
   statusText: {
     color: 'yellow',
