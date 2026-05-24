@@ -215,17 +215,3 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
-
-# Android/React Native
-.gradle/
-**/android/app/build/
-**/android/build/
-**/android/.cxx/
-**/android/.gradle/
-**/*.keystore
-!**/android/app/debug.keystore
-**/ios/build/
-**/ios/Pods/
-**/ios/DerivedData/
-*.swp
-*.DS_Store
