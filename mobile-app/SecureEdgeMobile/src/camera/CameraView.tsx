@@ -9,6 +9,7 @@ import { useTensorflowModel } from 'react-native-fast-tflite';
 import { NitroModules } from 'react-native-nitro-modules';
 import { useFaceDetectionFrameProcessor } from './FrameProcessor';
 import { type FaceDetection } from '../ai/faceDetection';
+import { FaceBox } from '../components/FaceBox';
 
 const BLAZEFACE_FRONT = require('../assets/models/blazeface_front.tflite');
 
@@ -45,14 +46,10 @@ export const CameraView: React.FC = () => {
         pixelFormat="yuv"
         frameProcessor={frameProcessor}
       />
-      {detection && (
-        <View style={styles.overlay}>
-          <Text style={styles.detectionText}>
-            Face Detected: {Math.round(detection.confidence * 100)}%
-            \nPos: {detection.x.toFixed(2)}, {detection.y.toFixed(2)}
-          </Text>
-        </View>
-      )}
+
+      {/* Realtime Face Overlay */}
+      <FaceBox detection={detection} />
+
       {model.state === 'loading' && (
         <View style={styles.overlay}>
           <Text style={styles.statusText}>Loading BlazeFace...</Text>
@@ -75,11 +72,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.5)',
     padding: 10,
     borderRadius: 8,
-  },
-  detectionText: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: 'bold',
+    alignItems: 'center',
   },
   statusText: {
     color: 'yellow',
