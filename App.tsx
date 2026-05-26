@@ -66,6 +66,9 @@ import {
 import {
   getSecuredData,
   saveSecuredData,
+  saveActiveUser,
+  loadActiveUser,
+  clearActiveUser,
 } from './src/security/secureStorage';
 import {
   float32ArrayToBase64,
@@ -76,8 +79,14 @@ import {
   isDebuggerPresent,
   checkApkIntegrity,
   getProcessTelemetry,
+  getSecurityReport,
+  getFridaReport,
+  getMagiskReport,
+  getHookReport,
 } from './src/security/deviceHardening';
+import { getDatabase } from './src/database/database';
 import RNFS from 'react-native-fs';
+
 
 import { OnboardingScreen } from './src/screens/OnboardingScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
@@ -800,24 +809,133 @@ function MainApp() {
     }
   };
 
+  // App Startup Order (CHANGE-15)
   useEffect(() => {
     const initializeApp = async () => {
-      const rooted = await isRooted();
-      const debuggerConnected = await isDebuggerPresent();
-      const integrityPassed = await checkApkIntegrity();
-      
-      setHardeningRoot(rooted);
-      setHardeningDebugger(debuggerConnected);
-      setHardeningIntegrity(integrityPassed);
+      try {
+        // Step 1: SQLite Init & Migration
+        setStatus('Initializing database...');
+        const db = await getDatabase();
+        console.log('[Startup] SQLite Database & Migration completed');
 
-      await loadSettings();
-      await loadAll();
+        // Step 2: Security Init
+        setStatus('Running security audit...');
+        const report = await getSecurityReport();
+        setHardeningRoot(report.rooted);
+        setHardeningDebugger(report.debugger);
+        
+        const integrityPassed = await checkApkIntegrity();
+        setHardeningIntegrity(integrityPassed);
+
+        // Audit log security checks (CHANGE-8, CHANGE-13, CHANGE-18)
+        const { logSecurityEvent } = require('./src/security/auditLogger');
+        if (report.rooted || report.debugger || report.fridaDetected || report.xposedDetected) {
+          await logSecurityEvent(
+            'SECURITY_WARNING',
+            `Rooted: ${report.rooted}, Debugger: ${report.debugger}, Frida: ${report.fridaDetected}, Xposed: ${report.xposedDetected}`
+          );
+        } else {
+          await logSecurityEvent('SECURITY_INFO', 'Startup security checks passed successfully.');
+        }
+
+        // Step 3: Load Settings & Database Profiles
+        setStatus('Loading settings and profiles...');
+        await loadSettings();
+        await loadAll();
+
+        // Step 4: Load Active User from EncryptedStorage
+        setStatus('Restoring active user...');
+        const savedUsername = await loadActiveUser();
+        if (savedUsername) {
+          let dbUsers = await getAllUsers();
+          const savedUser = dbUsers.find(u => u.name === savedUsername);
+          if (savedUser) {
+            setActiveUser(savedUser);
+            console.log(`[Startup] Restored active user: ${savedUsername}`);
+          }
+        }
+
+        // Step 5: Start Sync Manager
+        setStatus('Starting background sync...');
+        const { startSyncManager } = require('./src/sync/syncManager');
+        startSyncManager();
+
+        setStatus('Ready');
+      } catch (err) {
+        console.error('[Startup] Initialization failed:', err);
+        setRuntimeError('Application initialization failed: ' + (err as Error).message);
+      }
     };
 
     initializeApp();
   }, []);
 
+  // Stop background sync manager on unmount (CHANGE-6)
+  useEffect(() => {
+    return () => {
+      try {
+        const { stopSyncManager } = require('./src/sync/syncManager');
+        stopSyncManager();
+      } catch (e) {
+        console.warn('[App] Failed to stop sync manager on unmount:', e);
+      }
+    };
+  }, []);
+
+  // Periodic background security audit (CHANGE-11)
+  useEffect(() => {
+    const runSecurityAudit = async () => {
+      try {
+        const report = await getSecurityReport();
+        const frida = await getFridaReport();
+        const magisk = await getMagiskReport();
+        const hook = await getHookReport();
+
+        setHardeningRoot(report.rooted || magisk.magiskDetected);
+        setHardeningDebugger(report.debugger);
+
+        const { logSecurityEvent } = require('./src/security/auditLogger');
+        if (report.rooted || report.debugger || frida.fridaDetected || magisk.magiskDetected || hook.runtimeHooksDetected) {
+          console.warn('[Security] Periodic security check warning triggered');
+          await logSecurityEvent(
+            'SECURITY_WARNING',
+            `Root: ${report.rooted}, Debugger: ${report.debugger}, Frida: ${frida.fridaDetected}, Magisk: ${magisk.magiskDetected}, Zygisk: ${magisk.zygiskDetected}, Hooks: ${hook.runtimeHooksDetected}`
+          );
+        }
+      } catch (e) {
+        console.error('[Security] Periodic audit failed:', e);
+      }
+    };
+
+    // Run periodically every 30 seconds
+    const interval = setInterval(runSecurityAudit, 30000);
+
+    // Run on AppState active (foreground restore) (CHANGE-11)
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        runSecurityAudit();
+      }
+    });
+
+    return () => {
+      clearInterval(interval);
+      subscription.remove();
+    };
+  }, []);
+
+
+
+  // Save active user to secure storage on change (CHANGE-15)
+  useEffect(() => {
+    if (activeUser) {
+      saveActiveUser(activeUser.name).catch(err => console.error('[App] Failed to save active user:', err));
+    } else {
+      clearActiveUser().catch(err => console.error('[App] Failed to clear active user:', err));
+    }
+  }, [activeUser]);
+
   // Manage Camera Transition Delay and Mount State (CHANGE-3)
+
   useEffect(() => {
     const needsCamera =
       currentScreen === 'Verification' ||
@@ -1223,6 +1341,27 @@ function MainApp() {
       saveSecuredData(`last_active_${activeUser.name}`, nowStr);
       
       setStatus(`✓ Face Verified. Welcome back, ${activeUser.name}`);
+
+      // Log successful verification (CHANGE-20)
+      try {
+        const { logSecurityEvent } = require('./src/security/auditLogger');
+        logSecurityEvent('AUTH_SUCCESS', `User ${activeUser.name} verified successfully.`);
+      } catch (err) {
+        console.error('[Security] Failed to write success audit log:', err);
+      }
+
+      // Enqueue offline attendance record (CHANGE-1, CHANGE-5, CHANGE-8, CHANGE-19)
+      try {
+        const { enqueueAttendance } = require('./src/sync/syncQueue');
+        enqueueAttendance({
+          userId: String(activeUser.id),
+          userName: activeUser.name,
+          timestamp: new Date().toISOString(),
+          verificationScore: bestScore,
+        }).catch((e: any) => console.error('[App] Failed to enqueue attendance:', e));
+      } catch (err) {
+        console.error('[App] Error enqueuing attendance:', err);
+      }
     } else {
       setAuthenticatedUser(null);
       setAuthScore(bestScore);
@@ -1237,6 +1376,14 @@ function MainApp() {
           
           console.log(`[Lockout] Failed auth attempt #${currentAttempts} for: ${activeUser.name}`);
 
+          // Log failed verification (CHANGE-20)
+          try {
+            const { logSecurityEvent } = require('./src/security/auditLogger');
+            logSecurityEvent('AUTH_FAILURE', `Failed attempt #${currentAttempts} for ${activeUser.name}`);
+          } catch (err) {
+            console.error('[Security] Failed to write failure audit log:', err);
+          }
+
           let lockoutTime = 0;
           if (currentAttempts >= 15) {
             lockoutTime = now + 10 * 60 * 1000;
@@ -1249,6 +1396,14 @@ function MainApp() {
           if (lockoutTime > 0) {
             saveSecuredData(`lockout_expiry_${activeUser.name}`, String(lockoutTime));
             setLockoutExpiry(prev => ({ ...prev, [activeUser.name]: lockoutTime }));
+
+            // Log lockout triggered (CHANGE-20)
+            try {
+              const { logSecurityEvent } = require('./src/security/auditLogger');
+              logSecurityEvent('LOCKOUT_TRIGGERED', `User ${activeUser.name} locked out due to excessive failed attempts.`);
+            } catch (err) {
+              console.error('[Security] Failed to write lockout audit log:', err);
+            }
           }
         }
       }
@@ -1257,11 +1412,20 @@ function MainApp() {
         setAuthState('VERIFYING');
         if (!livenessPassed) {
           setStatus('Face match! Please blink & turn head to verify liveness.');
+
+          // Log spoof attempt (CHANGE-20)
+          try {
+            const { logSecurityEvent } = require('./src/security/auditLogger');
+            logSecurityEvent('SPOOF_ATTEMPT', `Spoof attempt suspected: face matched for ${activeUser.name} but liveness check failed.`);
+          } catch (err) {
+            console.error('[Security] Failed to write spoof audit log:', err);
+          }
         } else {
           setStatus(`Validating match... (${nextRollingScores.filter(s => s > 0.85).length}/3 frames, avg: ${(rollingAvg * 100).toFixed(0)}%)`);
         }
       } else if (bestScore >= 0.70 && bestScore <= 0.85) {
         setAuthState('VERIFYING');
+
         setStatus(`Uncertain Match (${(bestScore * 100).toFixed(0)}%). Align face.`);
       } else {
         setAuthState('REJECTED');
@@ -1269,7 +1433,17 @@ function MainApp() {
         lastRejectionTimeRef.current = now;
       }
     }
-  }, [storedEmbeddings, rollingScores, livenessBlink, livenessHead, activeUser, failedAttempts, lockoutExpiry, sessionActive, authenticatedUser, activeEmulator]);
+
+    // Zero out local embedding and clean up references (CHANGE-11)
+    if (currentScreen !== 'Onboarding') {
+      if (latestEmbeddingRef.current) {
+        latestEmbeddingRef.current.fill(0);
+        latestEmbeddingRef.current = null;
+      }
+      embedding.fill(0);
+    }
+  }, [storedEmbeddings, rollingScores, livenessBlink, livenessHead, activeUser, failedAttempts, lockoutExpiry, sessionActive, authenticatedUser, activeEmulator, currentScreen]);
+
 
   const handleRegister = async () => {
     const name = registrationName.trim();
@@ -1293,9 +1467,14 @@ function MainApp() {
       
       await insertEmbedding(userId, currentEmbedding, 'MobileFaceNet_v1');
       await loadAll();
+
+      // Zero out registered embedding memory (CHANGE-11)
+      currentEmbedding.fill(0);
+      latestEmbeddingRef.current = null;
       
       // Save onboarding completion state (CHANGE-9)
       await saveSecuredData('setting_onboardingCompleted', 'true');
+
       
       setRegistrationName('');
       setStatus(`Successfully registered user: ${name}!`);
@@ -1314,6 +1493,14 @@ function MainApp() {
 
   const handleClearAll = async () => {
     try {
+      // Zero out embeddings before deletion (CHANGE-11)
+      Object.keys(storedEmbeddings).forEach(username => {
+        const arrays = storedEmbeddings[username];
+        if (arrays) {
+          arrays.forEach(arr => arr.fill(0));
+        }
+      });
+
       const users = await getAllUsers();
       for (const u of users) {
         await deleteUser(u.id);
@@ -1323,6 +1510,7 @@ function MainApp() {
         await saveSecuredData(`last_active_${u.name}`, 'Never');
       }
       setStoredEmbeddings({});
+
       setUsersList([]);
       setActiveUser(null);
       setAuthenticatedUser(null);
@@ -1371,6 +1559,11 @@ function MainApp() {
     try {
       const user = usersList.find(u => u.id === id);
       if (user) {
+        // Zero out deleted user's embeddings in RAM (CHANGE-11)
+        const arrays = storedEmbeddings[user.name];
+        if (arrays) {
+          arrays.forEach(arr => arr.fill(0));
+        }
         await saveSecuredData(`failed_attempts_${user.name}`, '0');
         await saveSecuredData(`lockout_expiry_${user.name}`, '0');
         await saveSecuredData(`auth_count_${user.name}`, '0');
@@ -1378,6 +1571,7 @@ function MainApp() {
       }
       await deleteUser(id);
       await loadAll();
+
       
       // If no users left, reset onboarding Completed
       const newList = await getAllUsers();
@@ -1394,26 +1588,10 @@ function MainApp() {
 
   const handleBackup = async () => {
     try {
-      const users = await getAllUsers();
-      const backupData = [];
-      for (const u of users) {
-        const dbEmbeds = await getEmbeddingsForUser(u.id);
-        const serializedEmbeds = dbEmbeds.map(e => ({
-          embedding_base64: float32ArrayToBase64(e.embedding),
-          version: e.embedding_version,
-        }));
-        backupData.push({
-          name: u.name,
-          embeddings: serializedEmbeds,
-        });
-      }
-      
-      const plaintext = JSON.stringify(backupData);
-      const encrypted = await encryptData(plaintext);
-      
-      const backupPath = `${RNFS.DocumentDirectoryPath}/secure_edge_backup.enc`;
-      await RNFS.writeFile(backupPath, encrypted, 'utf8');
-      setStatus(`Encrypted backup created at: ${new Date().toLocaleTimeString()}`);
+      setStatus('Creating secure encrypted backup...');
+      const { performBackup } = require('./src/backup/backupManager');
+      const backupPath = await performBackup();
+      setStatus(`Encrypted backup created at: ${backupPath}`);
     } catch (err) {
       setStatus(`Backup failed: ${errorMessage(err)}`);
     }
@@ -1421,63 +1599,17 @@ function MainApp() {
 
   const handleRestore = async () => {
     try {
+      setStatus('Restoring database from secure backup...');
       const backupPath = `${RNFS.DocumentDirectoryPath}/secure_edge_backup.enc`;
-      const exists = await RNFS.exists(backupPath);
-      if (!exists) {
-        setStatus('No backup file found to restore.');
-        return;
-      }
-      
-      const encrypted = await RNFS.readFile(backupPath, 'utf8');
-      const decrypted = await decryptData(encrypted);
-      const backupData = JSON.parse(decrypted);
-      
-      // Strict Backup Import Validation (CHANGE-6)
-      if (!Array.isArray(backupData)) {
-        throw new Error('Backup data is not a valid list of profiles.');
-      }
-      for (const uData of backupData) {
-        if (typeof uData.name !== 'string' || !uData.name.trim()) {
-          throw new Error('Backup contains invalid username.');
-        }
-        if (!Array.isArray(uData.embeddings)) {
-          throw new Error(`Profile ${uData.name} has no valid embeddings array.`);
-        }
-        for (const eData of uData.embeddings) {
-          if (typeof eData.embedding_base64 !== 'string') {
-            throw new Error(`Profile ${uData.name} has malformed embedding base64.`);
-          }
-          const Float32Arr = base64ToFloat32Array(eData.embedding_base64);
-          if (Float32Arr.length !== 128) {
-            throw new Error(`Invalid embedding vector dimension: ${Float32Arr.length} (expected 128).`);
-          }
-          for (let i = 0; i < Float32Arr.length; i++) {
-            if (isNaN(Float32Arr[i]) || !isFinite(Float32Arr[i])) {
-              throw new Error(`Embedding contains invalid values (NaN/Infinity) for ${uData.name}.`);
-            }
-          }
-        }
-      }
-
-      for (const uData of backupData) {
-        let user = usersList.find(u => u.name.toLowerCase() === uData.name.toLowerCase());
-        let userId = user ? user.id : null;
-        if (!userId) {
-          userId = await createUser(uData.name);
-        }
-        for (const eData of uData.embeddings) {
-          const Float32Arr = base64ToFloat32Array(eData.embedding_base64);
-          await insertEmbedding(userId, Float32Arr, eData.version);
-        }
-      }
-      
+      const { performRestore } = require('./src/backup/restoreManager');
+      await performRestore(backupPath);
       await loadAll();
       setStatus('Database restored successfully from backup!');
     } catch (err) {
       setStatus(`Restore failed: ${errorMessage(err)}`);
-      throw err;
     }
   };
+
 
   const frameProcessor = useFrameProcessor(
     frame => {

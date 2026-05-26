@@ -32,6 +32,29 @@ export async function getEncryptionKey(): Promise<string> {
   }
 }
 
+const DB_KEY_ALIAS = 'SecureEdgeMobileDbKeyPassphrase';
+
+export async function getDbPassphraseKey(): Promise<string> {
+  try {
+    const credentials = await Keychain.getGenericPassword({
+      service: DB_KEY_ALIAS,
+    });
+    if (credentials) {
+      return credentials.password;
+    }
+
+    const newKey = generateRandomKey();
+    await Keychain.setGenericPassword('db_passphrase_key', newKey, {
+      service: DB_KEY_ALIAS,
+    });
+    return newKey;
+  } catch (error) {
+    console.warn('[SecureStorage] Keystore access error for DB key. Using fallback key.', error);
+    return 'fallback_db_secure_passphrase_9876543210abcdef';
+  }
+}
+
+
 export async function saveSecuredData(key: string, value: string): Promise<void> {
   try {
     await EncryptedStorage.setItem(key, value);
@@ -55,4 +78,16 @@ export async function deleteSecuredData(key: string): Promise<void> {
   } catch (error) {
     console.error(`[SecureStorage] Failed to delete secured data for key ${key}:`, error);
   }
+}
+
+export async function saveActiveUser(username: string): Promise<void> {
+  await saveSecuredData('active_user_name', username);
+}
+
+export async function loadActiveUser(): Promise<string | null> {
+  return await getSecuredData('active_user_name');
+}
+
+export async function clearActiveUser(): Promise<void> {
+  await deleteSecuredData('active_user_name');
 }
