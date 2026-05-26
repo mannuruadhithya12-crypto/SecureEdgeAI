@@ -10,16 +10,24 @@ export type NormalizedBox = {
   yMax: number;
 };
 
-let lastNoseOffset: { x: number; y: number } | undefined;
-let yawMovement = 0;
-let pitchMovement = 0;
+let lastSmoothedX = -999;
+let lastSmoothedY = -999;
 
+const noseHistoryX: number[] = [];
+const noseHistoryY: number[] = [];
+let lastMovementTime = 0;
+
+/**
+ * Detects head movement by monitoring the relative position of the nose tip.
+ * Uses a sliding window range check to prevent noise triggers.
+ */
 export function detectHeadMovement(
   box: NormalizedBox,
-  keypoints: Keypoint[]
+  keypoints: Keypoint[],
+  isEmulator: boolean = false
 ): boolean {
   'worklet';
-  if (keypoints == null || keypoints.length < 3) return false; // Nose tip is keypoint 2
+  if (keypoints == null || keypoints.length < 3) return false;
   
   const nose = keypoints[2];
   const boxCenterX = (box.xMin + box.xMax) / 2;
@@ -27,29 +35,64 @@ export function detectHeadMovement(
   const boxWidth = box.xMax - box.xMin;
   const boxHeight = box.yMax - box.yMin;
   
-  // Normalize nose position relative to the face size
+  if (boxWidth === 0 || boxHeight === 0) return false;
+  
+  // Normalize nose offset relative to face size
   const relativeX = (nose.x - boxCenterX) / boxWidth;
   const relativeY = (nose.y - boxCenterY) / boxHeight;
   
-  if (lastNoseOffset == null) {
-    lastNoseOffset = { x: relativeX, y: relativeY };
-    return false;
+  // 1. EMA Smoothing to filter frame jitter (TASK-3)
+  const alpha = isEmulator ? 0.35 : 0.50;
+  let smoothedX = relativeX;
+  let smoothedY = relativeY;
+  
+  if (lastSmoothedX > -900) {
+    smoothedX = alpha * relativeX + (1 - alpha) * lastSmoothedX;
+    smoothedY = alpha * relativeY + (1 - alpha) * lastSmoothedY;
+  }
+  lastSmoothedX = smoothedX;
+  lastSmoothedY = smoothedY;
+  
+  // 2. Add to history queues with strict buffer limit (CHANGE-10: movement history max = 10)
+  noseHistoryX.push(smoothedX);
+  if (noseHistoryX.length > 10) {
+    noseHistoryX.shift();
   }
   
-  const dx = Math.abs(relativeX - lastNoseOffset.x);
-  const dy = Math.abs(relativeY - lastNoseOffset.y);
+  noseHistoryY.push(smoothedY);
+  if (noseHistoryY.length > 10) {
+    noseHistoryY.shift();
+  }
   
-  // Update last position slowly
-  lastNoseOffset.x = lastNoseOffset.x * 0.8 + relativeX * 0.2;
-  lastNoseOffset.y = lastNoseOffset.y * 0.8 + relativeY * 0.2;
+  if (noseHistoryX.length < 6) return false;
   
-  // Accumulate movement
-  yawMovement = yawMovement * 0.95 + dx;
-  pitchMovement = pitchMovement * 0.95 + dy;
+  // 3. Compute range of movement in history window (max - min)
+  let minX = Infinity;
+  let maxX = -Infinity;
+  for (let i = 0; i < noseHistoryX.length; i++) {
+    const val = noseHistoryX[i];
+    if (val < minX) minX = val;
+    if (val > maxX) maxX = val;
+  }
+  const rangeX = maxX - minX;
   
-  // If accumulated yaw or pitch exceeds a threshold, head movement is verified
-  if (yawMovement > 0.08 || pitchMovement > 0.08) {
-    console.log(`[Liveness] Head movement verified! Yaw: ${yawMovement.toFixed(4)}, Pitch: ${pitchMovement.toFixed(4)}`);
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (let i = 0; i < noseHistoryY.length; i++) {
+    const val = noseHistoryY[i];
+    if (val < minY) minY = val;
+    if (val > maxY) maxY = val;
+  }
+  const rangeY = maxY - minY;
+  
+  // Adaptive thresholds (CHANGE-12)
+  const thresholdX = isEmulator ? 0.05 : 0.085;
+  const thresholdY = isEmulator ? 0.05 : 0.085;
+  
+  const now = Date.now();
+  if ((rangeX > thresholdX || rangeY > thresholdY) && (now - lastMovementTime > 1500)) {
+    lastMovementTime = now;
+    console.log(`[Liveness] Head movement verified! RangeX: ${rangeX.toFixed(4)}, RangeY: ${rangeY.toFixed(4)}`);
     console.log('Head movement verified');
     return true;
   }
@@ -59,7 +102,8 @@ export function detectHeadMovement(
 
 export function resetHeadMovementHistory(): void {
   'worklet';
-  lastNoseOffset = undefined;
-  yawMovement = 0;
-  pitchMovement = 0;
+  lastSmoothedX = -999;
+  lastSmoothedY = -999;
+  noseHistoryX.length = 0;
+  noseHistoryY.length = 0;
 }

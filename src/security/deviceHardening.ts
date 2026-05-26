@@ -45,3 +45,21 @@ export async function checkApkIntegrity(): Promise<boolean> {
     return false;
   }
 }
+
+export interface TelemetryData {
+  usedMemoryMb: number;
+  thermalStatus: string;
+}
+
+export async function getProcessTelemetry(): Promise<TelemetryData> {
+  if (Platform.OS !== 'android') {
+    return { usedMemoryMb: 92.4, thermalStatus: 'NONE' };
+  }
+  try {
+    return await SecurityModule.getProcessMemoryAndThermal();
+  } catch (error) {
+    console.warn('[Hardening] Failed to get native telemetry:', error);
+    return { usedMemoryMb: 0, thermalStatus: 'UNKNOWN' };
+  }
+}
+
