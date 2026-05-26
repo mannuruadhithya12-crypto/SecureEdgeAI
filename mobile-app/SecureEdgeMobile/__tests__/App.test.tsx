@@ -84,6 +84,21 @@ jest.mock('react-native-sqlite-storage', () => {
   };
 });
 
+// Mock react-native-sqlcipher-storage
+jest.mock('react-native-sqlcipher-storage', () => {
+  return {
+    enablePromise: jest.fn(),
+    openDatabase: jest.fn(() => Promise.resolve({
+      executeSql: jest.fn(() => Promise.resolve([])),
+      transaction: jest.fn((cb) => {
+        const tx = { executeSql: jest.fn() };
+        cb(tx);
+        return Promise.resolve();
+      })
+    }))
+  };
+});
+
 // Mock react-native-fs
 jest.mock('react-native-fs', () => {
   return {
@@ -122,6 +137,12 @@ NativeModules.SecurityModule = {
   isDebuggerAttached: jest.fn(() => Promise.resolve(false)),
   checkApkSignature: jest.fn(() => Promise.resolve('MOCK_SIGNATURE_HASH')),
 };
+
+// Mock react-native-netinfo
+jest.mock('@react-native-community/netinfo', () => ({
+  addEventListener: jest.fn(() => jest.fn()),
+  fetch: jest.fn(() => Promise.resolve({ isConnected: true })),
+}));
 
 import App from '../App';
 

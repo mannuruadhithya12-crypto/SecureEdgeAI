@@ -63,3 +63,116 @@ export async function getProcessTelemetry(): Promise<TelemetryData> {
   }
 }
 
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, defaultValue: T): Promise<T> {
+  return new Promise<T>((resolve) => {
+    const timer = setTimeout(() => {
+      console.warn(`[Hardening] Native security scan timed out after ${timeoutMs}ms`);
+      resolve(defaultValue);
+    }, timeoutMs);
+    promise
+      .then((val) => {
+        clearTimeout(timer);
+        resolve(val);
+      })
+      .catch((err) => {
+        clearTimeout(timer);
+        console.warn('[Hardening] Security scan failed:', err);
+        resolve(defaultValue);
+      });
+  });
+}
+
+export interface SecurityReport {
+  rooted: boolean;
+  debugger: boolean;
+  fridaDetected: boolean;
+  xposedDetected: boolean;
+  suspiciousProcesses: string[];
+}
+
+export async function getSecurityReport(): Promise<SecurityReport> {
+  const fallback: SecurityReport = {
+    rooted: false,
+    debugger: false,
+    fridaDetected: false,
+    xposedDetected: false,
+    suspiciousProcesses: [],
+  };
+  if (__DEV__ || Platform.OS !== 'android') return fallback;
+  try {
+    return await withTimeout(SecurityModule.getSecurityReport(), 5000, fallback);
+  } catch (error) {
+    console.warn('[Hardening] Failed to get native security report:', error);
+    return fallback;
+  }
+}
+
+export interface FridaReport {
+  fridaDetected: boolean;
+  fridaPortsDetected: boolean;
+  fridaLibrariesDetected: boolean;
+  suspiciousProcesses: string[];
+}
+
+export async function getFridaReport(): Promise<FridaReport> {
+  const fallback: FridaReport = {
+    fridaDetected: false,
+    fridaPortsDetected: false,
+    fridaLibrariesDetected: false,
+    suspiciousProcesses: [],
+  };
+  if (__DEV__ || Platform.OS !== 'android') return fallback;
+  try {
+    return await withTimeout(SecurityModule.getFridaReport(), 5000, fallback);
+  } catch (error) {
+    console.warn('[Hardening] Frida report failed:', error);
+    return fallback;
+  }
+}
+
+export interface MagiskReport {
+  magiskDetected: boolean;
+  zygiskDetected: boolean;
+  suspiciousPaths: string[];
+  suspiciousMounts: string[];
+}
+
+export async function getMagiskReport(): Promise<MagiskReport> {
+  const fallback: MagiskReport = {
+    magiskDetected: false,
+    zygiskDetected: false,
+    suspiciousPaths: [],
+    suspiciousMounts: [],
+  };
+  if (__DEV__ || Platform.OS !== 'android') return fallback;
+  try {
+    return await withTimeout(SecurityModule.getMagiskReport(), 5000, fallback);
+  } catch (error) {
+    console.warn('[Hardening] Magisk report failed:', error);
+    return fallback;
+  }
+}
+
+export interface HookReport {
+  xposedDetected: boolean;
+  lsposedDetected: boolean;
+  runtimeHooksDetected: boolean;
+}
+
+export async function getHookReport(): Promise<HookReport> {
+  const fallback: HookReport = {
+    xposedDetected: false,
+    lsposedDetected: false,
+    runtimeHooksDetected: false,
+  };
+  if (__DEV__ || Platform.OS !== 'android') return fallback;
+  try {
+    return await withTimeout(SecurityModule.getHookReport(), 5000, fallback);
+  } catch (error) {
+    console.warn('[Hardening] Hook report failed:', error);
+    return fallback;
+  }
+}
+
+
+
