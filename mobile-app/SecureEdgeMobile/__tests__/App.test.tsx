@@ -65,6 +65,7 @@ jest.mock('react-native-safe-area-context', () => {
   return {
     SafeAreaProvider: ({ children }: any) => children,
     SafeAreaView: ({ children }: any) => children,
+    useSafeAreaInsets: jest.fn(() => ({ top: 0, bottom: 0, left: 0, right: 0 })),
   };
 });
 
@@ -125,7 +126,11 @@ NativeModules.SecurityModule = {
 import App from '../App';
 
 test('renders correctly', async () => {
+  let renderer: any;
   await ReactTestRenderer.act(() => {
-    ReactTestRenderer.create(<App />);
+    renderer = ReactTestRenderer.create(<App />);
+  });
+  await ReactTestRenderer.act(() => {
+    renderer.unmount();
   });
 });

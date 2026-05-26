@@ -3,6 +3,8 @@ package com.secureedgemobile
 import android.os.Build
 import android.os.Debug
 import android.content.pm.PackageManager
+import android.content.Context
+import android.os.PowerManager
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
@@ -80,6 +82,41 @@ class SecurityModule(reactContext: ReactApplicationContext) : ReactContextBaseJa
             }
         } catch (e: Exception) {
             promise.reject("SIGNATURE_ERROR", e.message)
+        }
+    }
+
+    @ReactMethod
+    fun getProcessMemoryAndThermal(promise: Promise) {
+        try {
+            val context = reactApplicationContext
+            val runtime = Runtime.getRuntime()
+            val usedMemoryBytes = runtime.totalMemory() - runtime.freeMemory()
+            val usedMemoryMb = usedMemoryBytes / (1024 * 1024)
+            
+            val powerManager = context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+            val thermalStatus = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                powerManager.currentThermalStatus
+            } else {
+                -1
+            }
+            
+            val thermalWarning = when (thermalStatus) {
+                0 -> "NONE"
+                1 -> "LIGHT"
+                2 -> "MODERATE"
+                3 -> "SEVERE"
+                4 -> "CRITICAL"
+                5 -> "EMERGENCY"
+                6 -> "SHUTDOWN"
+                else -> "UNKNOWN"
+            }
+            
+            val result = com.facebook.react.bridge.WritableNativeMap()
+            result.putDouble("usedMemoryMb", usedMemoryMb.toDouble())
+            result.putString("thermalStatus", thermalWarning)
+            promise.resolve(result)
+        } catch (e: Exception) {
+            promise.reject("TELEMETRY_ERROR", e.message)
         }
     }
 }

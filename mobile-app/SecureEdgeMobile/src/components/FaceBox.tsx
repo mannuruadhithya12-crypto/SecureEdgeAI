@@ -1,6 +1,13 @@
 import React, { useEffect } from 'react';
 import { StyleSheet, View, Text, Dimensions } from 'react-native';
-import { type FaceDetection } from '../ai/faceDetection';
+
+export interface FaceDetection {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  confidence: number;
+}
 
 interface FaceBoxProps {
   detection: FaceDetection | null;
