@@ -9,7 +9,6 @@ import {
 } from 'react-native';
 import {
   Camera,
-  type CameraPosition,
   runAtTargetFps,
   Templates,
   useCameraDevice,

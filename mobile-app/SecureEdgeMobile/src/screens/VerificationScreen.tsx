@@ -66,7 +66,7 @@ export function VerificationScreen({
   livenessBlink,
   livenessHead,
   rollingScores,
-  sessionActive,
+  sessionActive: _sessionActive,
   lockoutTimeLeft,
   devFps,
   devInferenceMs,
