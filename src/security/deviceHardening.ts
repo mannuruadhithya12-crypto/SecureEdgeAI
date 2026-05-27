@@ -1,7 +1,5 @@
 import { NativeModules, Platform } from 'react-native';
 
-const { SecurityModule } = NativeModules;
-
 export async function isRooted(): Promise<boolean> {
   if (__DEV__) {
     console.log('[Hardening] Bypassing Root Detection check in DEV mode');
@@ -9,7 +7,7 @@ export async function isRooted(): Promise<boolean> {
   }
   if (Platform.OS !== 'android') return false;
   try {
-    return await SecurityModule.isDeviceRooted();
+    return (await NativeModules.SecurityModule?.isDeviceRooted?.()) ?? false;
   } catch (error) {
     console.warn('[Hardening] Native Root Detection check error:', error);
     return false;
@@ -23,7 +21,7 @@ export async function isDebuggerPresent(): Promise<boolean> {
   }
   if (Platform.OS !== 'android') return false;
   try {
-    return await SecurityModule.isDebuggerAttached();
+    return (await NativeModules.SecurityModule?.isDebuggerAttached?.()) ?? false;
   } catch (error) {
     console.warn('[Hardening] Native Debugger Detection check error:', error);
     return false;
@@ -37,7 +35,7 @@ export async function checkApkIntegrity(): Promise<boolean> {
   }
   if (Platform.OS !== 'android') return true;
   try {
-    const signatureHash = await SecurityModule.checkApkSignature();
+    const signatureHash = await NativeModules.SecurityModule?.checkApkSignature?.();
     console.log(`[Hardening] APK SHA-256 Signature: ${signatureHash}`);
     return signatureHash != null && signatureHash.length > 0;
   } catch (error) {
@@ -56,14 +54,19 @@ export async function getProcessTelemetry(): Promise<TelemetryData> {
     return { usedMemoryMb: 92.4, thermalStatus: 'NONE' };
   }
   try {
-    return await SecurityModule.getProcessMemoryAndThermal();
+    const result = await NativeModules.SecurityModule?.getProcessMemoryAndThermal?.();
+    if (result) {
+      return result;
+    }
+    return { usedMemoryMb: 92.4, thermalStatus: 'NONE' };
   } catch (error) {
     console.warn('[Hardening] Failed to get native telemetry:', error);
     return { usedMemoryMb: 0, thermalStatus: 'UNKNOWN' };
   }
 }
 
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number, defaultValue: T): Promise<T> {
+function withTimeout<T>(promise: Promise<T> | undefined, timeoutMs: number, defaultValue: T): Promise<T> {
+  if (!promise) return Promise.resolve(defaultValue);
   return new Promise<T>((resolve) => {
     const timer = setTimeout(() => {
       console.warn(`[Hardening] Native security scan timed out after ${timeoutMs}ms`);
@@ -100,7 +103,8 @@ export async function getSecurityReport(): Promise<SecurityReport> {
   };
   if (__DEV__ || Platform.OS !== 'android') return fallback;
   try {
-    return await withTimeout(SecurityModule.getSecurityReport(), 5000, fallback);
+    const p = NativeModules.SecurityModule?.getSecurityReport?.();
+    return await withTimeout(p, 5000, fallback);
   } catch (error) {
     console.warn('[Hardening] Failed to get native security report:', error);
     return fallback;
@@ -123,7 +127,8 @@ export async function getFridaReport(): Promise<FridaReport> {
   };
   if (__DEV__ || Platform.OS !== 'android') return fallback;
   try {
-    return await withTimeout(SecurityModule.getFridaReport(), 5000, fallback);
+    const p = NativeModules.SecurityModule?.getFridaReport?.();
+    return await withTimeout(p, 5000, fallback);
   } catch (error) {
     console.warn('[Hardening] Frida report failed:', error);
     return fallback;
@@ -146,7 +151,8 @@ export async function getMagiskReport(): Promise<MagiskReport> {
   };
   if (__DEV__ || Platform.OS !== 'android') return fallback;
   try {
-    return await withTimeout(SecurityModule.getMagiskReport(), 5000, fallback);
+    const p = NativeModules.SecurityModule?.getMagiskReport?.();
+    return await withTimeout(p, 5000, fallback);
   } catch (error) {
     console.warn('[Hardening] Magisk report failed:', error);
     return fallback;
@@ -167,12 +173,10 @@ export async function getHookReport(): Promise<HookReport> {
   };
   if (__DEV__ || Platform.OS !== 'android') return fallback;
   try {
-    return await withTimeout(SecurityModule.getHookReport(), 5000, fallback);
+    const p = NativeModules.SecurityModule?.getHookReport?.();
+    return await withTimeout(p, 5000, fallback);
   } catch (error) {
     console.warn('[Hardening] Hook report failed:', error);
     return fallback;
   }
 }
-
-
-

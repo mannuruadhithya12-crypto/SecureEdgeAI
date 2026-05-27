@@ -4,12 +4,18 @@ export type Keypoint = {
 };
 
 const eyeContrastHistory: number[] = [];
+const eyeContrastTimestamps: number[] = [];
 let lastSmoothedVar = -1;
 let lastBlinkTime = 0;
+let dipStartTime = 0;
+let isDipped = false;
+
+// Temporal confidence score for liveness tracking
+let livenessConfidence = 0.0;
 
 /**
  * Detects a blink using local patch variance over eyes in the 128x128 BlazeFace image.
- * Uses EMA smoothing and valley detection to avoid false positives.
+ * Validates blink valley duration (100ms - 450ms) and eye-state smoothing.
  */
 export function detectBlink(
   blazePixels: Float32Array,
@@ -17,7 +23,10 @@ export function detectBlink(
   isEmulator: boolean = false
 ): boolean {
   'worklet';
-  if (keypoints == null || keypoints.length < 2) return false;
+  if (keypoints == null || keypoints.length < 2) {
+    livenessConfidence = Math.max(0, livenessConfidence - 0.1);
+    return false;
+  }
   
   // Extract a 3x3 patch around each eye center
   const getPatchVariance = (eyeX: number, eyeY: number): number => {
@@ -26,7 +35,7 @@ export function detectBlink(
     
     let sum = 0;
     let count = 0;
-    const values: number[] = []; // In a worklet, small local arrays are fine, but let's be careful
+    const values: number[] = [];
     
     for (let dy = -1; dy <= 1; dy++) {
       for (let dx = -1; dx <= 1; dx++) {
@@ -58,7 +67,7 @@ export function detectBlink(
   const leftEyeVar = getPatchVariance(keypoints[1].x, keypoints[1].y);
   const avgVar = (rightEyeVar + leftEyeVar) / 2;
   
-  // 1. EMA Smoothing (CHANGE-2 / TASK-3)
+  // 1. EMA Smoothing (Eye-state smoothing)
   const alpha = isEmulator ? 0.40 : 0.55;
   let smoothed = avgVar;
   if (lastSmoothedVar >= 0) {
@@ -66,20 +75,23 @@ export function detectBlink(
   }
   lastSmoothedVar = smoothed;
   
-  // 2. Add to history with strict buffer limit (CHANGE-10: blink history max = 10)
+  const now = Date.now();
+  
+  // 2. Add to history with strict buffer limit
   eyeContrastHistory.push(smoothed);
+  eyeContrastTimestamps.push(now);
   if (eyeContrastHistory.length > 10) {
     eyeContrastHistory.shift();
+    eyeContrastTimestamps.shift();
   }
   
   if (eyeContrastHistory.length < 5) return false;
   
-  // 3. Valley Detection
-  // We look for a dip in the middle of our history queue
+  // 3. Valley Detection & Duration Validation
   const len = eyeContrastHistory.length;
   const latest = eyeContrastHistory[len - 1];
   
-  // Find baseline (maximum variance before the dip)
+  // Find baseline
   let baselineMax = -Infinity;
   const checkLimit = Math.min(len - 2, 4);
   for (let i = 0; i < checkLimit; i++) {
@@ -90,32 +102,61 @@ export function detectBlink(
   
   // Find local minimum in recent frames
   let localMin = Infinity;
+  let localMinIdx = -1;
   for (let i = checkLimit; i < len - 1; i++) {
     if (eyeContrastHistory[i] < localMin) {
       localMin = eyeContrastHistory[i];
+      localMinIdx = i;
     }
   }
   
-  // Thresholds based on mode (CHANGE-12)
-  const dropRatio = isEmulator ? 0.88 : 0.78; // 12% drop for emulator, 22% drop for real device
-  const recoveryRatio = isEmulator ? 1.08 : 1.18; // 8% recovery for emulator, 18% for real device
+  const dropRatio = isEmulator ? 0.88 : 0.78; 
+  const recoveryRatio = isEmulator ? 1.08 : 1.18;
   
   const hasDropped = localMin < baselineMax * dropRatio;
   const hasRecovered = latest > localMin * recoveryRatio;
   
-  const now = Date.now();
-  if (hasDropped && hasRecovered && (now - lastBlinkTime > 1500)) {
-    lastBlinkTime = now;
-    console.log(`[Liveness] Blink detected! baseline: ${baselineMax.toFixed(2)}, min: ${localMin.toFixed(2)}, latest: ${latest.toFixed(2)}`);
-    console.log('Blink detected');
-    return true;
+  if (hasDropped && !isDipped) {
+    isDipped = true;
+    dipStartTime = eyeContrastTimestamps[localMinIdx];
+  }
+  
+  if (hasDropped && hasRecovered && isDipped) {
+    const dipDuration = now - dipStartTime;
+    
+    // Reset dip state
+    isDipped = false;
+    
+    // Validate blink duration: typical human blink is 100ms to 400ms.
+    // If it's too fast or too slow (e.g. static photo holding), reject it.
+    if (dipDuration >= 100 && dipDuration <= 450 && (now - lastBlinkTime > 1500)) {
+      lastBlinkTime = now;
+      livenessConfidence = Math.min(1.0, livenessConfidence + 0.35);
+      console.log(`[Liveness] Blink verified! Duration: ${dipDuration}ms, Confidence: ${livenessConfidence.toFixed(2)}`);
+      console.log('Blink verified');
+      return true;
+    } else {
+      livenessConfidence = Math.max(0, livenessConfidence - 0.15);
+      if (dipDuration < 100 || dipDuration > 450) {
+        console.log(`[Liveness] Blink rejected due to invalid duration: ${dipDuration}ms`);
+      }
+    }
   }
   
   return false;
 }
 
+export function getBlinkConfidence(): number {
+  'worklet';
+  return livenessConfidence;
+}
+
 export function resetBlinkHistory(): void {
   'worklet';
   eyeContrastHistory.length = 0;
+  eyeContrastTimestamps.length = 0;
   lastSmoothedVar = -1;
+  isDipped = false;
+  dipStartTime = 0;
+  livenessConfidence = 0.0;
 }

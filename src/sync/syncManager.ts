@@ -9,16 +9,17 @@ let isOnline = false;
 let isSyncingInProgress = false;
 let syncIntervalId: any = null;
 
-// Track active network state
+// Track active network state — only act on real transitions
 NetInfo.addEventListener(state => {
   const nextOnline = !!state.isConnected;
-  console.log(`[SyncManager] Network status changed: ${nextOnline ? 'ONLINE' : 'OFFLINE'}`);
-  if (nextOnline && !isOnline) {
-    isOnline = true;
+  if (nextOnline === isOnline) {
+    return; // No actual change, skip
+  }
+  isOnline = nextOnline;
+  console.log(`[SyncManager] Network status changed: ${isOnline ? 'ONLINE' : 'OFFLINE'}`);
+  if (isOnline) {
     // Resume sync queue when internet restored (CHANGE-7)
     triggerSync();
-  } else {
-    isOnline = nextOnline;
   }
 });
 

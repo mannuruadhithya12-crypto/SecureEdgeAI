@@ -300,7 +300,7 @@ class SecurityModule(reactContext: ReactApplicationContext) : ReactContextBaseJa
                     try {
                         val cmdline = File(pidFile, "cmdline")
                         if (cmdline.exists()) {
-                            val name = cmdline.readText().trimEnd(charArrayOf('\u0000', ' '))
+                            val name = cmdline.readText().trimEnd('\u0000', ' ')
                             if (name.contains("frida-server") || name.contains("fridaserver")) {
                                 fridaDetected = true
                                 suspiciousProcesses.pushString("Process: $name")

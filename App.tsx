@@ -11,7 +11,6 @@ import {
   Camera,
   runAtTargetFps,
   Templates,
-  useCameraDevice,
   useCameraFormat,
   useCameraPermission,
   useFrameProcessor,
@@ -21,6 +20,7 @@ import {
   type TensorflowModelDelegate,
   type TfliteModel,
   useTensorflowModel,
+  loadTensorflowModel,
 } from 'react-native-fast-tflite';
 import {
   NitroModules,
@@ -39,14 +39,10 @@ import {
   deleteEmbedding,
 } from './src/services/embeddingStorage';
 import { detectBlink, resetBlinkHistory } from './src/liveness/blinkDetection';
-import { detectHeadMovement, resetHeadMovementHistory } from './src/liveness/headMovement';
-import {
-  checkBrightness,
-  checkBlur,
-  checkFaceSize,
-  checkFaceAlignment,
-  checkEdgeProximity,
-} from './src/utils/faceQuality';
+import { validateFaceQuality } from './src/ai/faceQuality';
+import { verifyAntiSpoofing, resetAntiSpoofHistory } from './src/security/antiSpoofing';
+import { getBlinkConfidence } from './src/liveness/blinkDetection';
+import { detectHeadMovement, resetHeadMovementHistory, getHeadMovementConfidence } from './src/liveness/headMovement';
 import { authenticateFace } from './src/services/authenticateFace';
 import {
   createUser,
@@ -300,16 +296,37 @@ function generateBlazeFaceAnchors(): Float32Array {
   return anchors;
 }
 
-let workletFrameCounter = 0;
-let workletCachedBlurPassed = true;
-let workletWarmUpFrames = 0;
-let workletInferenceFps = 4;
-let workletLatency1 = 0;
-let workletLatency2 = 0;
-let workletLatency3 = 0;
-let workletLatency4 = 0;
-let workletLatency5 = 0;
-let workletLatencyCount = 0;
+// Hermes worklets cannot assign to module-scope `let` variables (even = x+1 fails).
+// All mutable worklet state is consolidated into a single const object so that
+// property mutations (ws.x = ...) are used instead of variable reassignment.
+const ws = {
+  frameCounter: 0,
+  cachedBlurPassed: true,
+  warmUpFrames: 0,
+  inferenceFps: 4,
+  latency1: 0,
+  latency2: 0,
+  latency3: 0,
+  latency4: 0,
+  latency5: 0,
+  latencyCount: 0,
+  lastHeavySpoofTime: 0,
+  cachedSpoofResult: false,
+  cachedSpoofConfidence: 0.0,
+  faceStabilityStartTime: 0,
+  lastTrackedNoseX: -999,
+  lastTrackedNoseY: -999,
+  lastFaceDetectedTime: 0,
+  smoothedBoxXMin: -1,
+  smoothedBoxYMin: -1,
+  smoothedBoxXMax: -1,
+  smoothedBoxYMax: -1,
+  smoothedBoxXMinTrend: 0,
+  smoothedBoxYMinTrend: 0,
+  smoothedBoxXMaxTrend: 0,
+  smoothedBoxYMaxTrend: 0,
+};
+
 
 // Pre-allocated reusable structures for the worklet thread (CHANGE-2 / TASK-5)
 const MAX_DETECTED_FACES = 5;
@@ -535,6 +552,64 @@ function faceCropForFrame(frameWidth: number, frameHeight: number, box?: Normali
 
 
 
+function useResilientTensorflowModel(source: any, label: string) {
+  const [state, setState] = useState<any>({
+    model: undefined,
+    state: 'loading',
+  });
+
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      // Fallback chain: GPU -> NNAPI -> CPU ([])
+      const fallbackChain: { name: string; delegate: TensorflowModelDelegate[] }[] = [
+        { name: 'GPU', delegate: ['android-gpu'] },
+        { name: 'NNAPI', delegate: ['nnapi'] },
+        { name: 'CPU', delegate: [] }
+      ];
+
+      for (const step of fallbackChain) {
+        if (!active) return;
+        try {
+          console.log(`[ModelLoader] Attempting to load ${label} with ${step.name} delegate...`);
+          const startTime = performance.now();
+          const m = await loadTensorflowModel(source, step.delegate);
+          const duration = performance.now() - startTime;
+          console.log(`[ModelLoader] Successfully loaded ${label} with ${step.name} delegate in ${duration.toFixed(1)}ms`);
+          
+          // Log benchmark timing for the delegate
+          console.log(`[Delegate Benchmark] ${label} - Delegate: ${step.name}, Latency: ${duration.toFixed(1)}ms, Success: true`);
+          
+          if (active) {
+            setState({ model: m, state: 'loaded' });
+          }
+          return;
+        } catch (e) {
+          console.warn(`[ModelLoader] Failed to load ${label} with ${step.name} delegate: ${errorMessage(e)}`);
+          console.log(`[Delegate Benchmark] ${label} - Delegate: ${step.name}, Success: false, Error: ${errorMessage(e)}`);
+        }
+      }
+
+      // If all fallbacks failed
+      if (active) {
+        setState({
+          model: undefined,
+          state: 'error',
+          error: new Error(`Failed to load ${label} with all delegates.`),
+        });
+      }
+    };
+
+    load();
+
+    return () => {
+      active = false;
+    };
+  }, [source, label]);
+
+  return state;
+}
+
 type AuthState = 'IDLE' | 'SCANNING' | 'DETECTING' | 'VERIFYING' | 'AUTHENTICATED' | 'REJECTED';
 
 function MainApp() {
@@ -542,6 +617,9 @@ function MainApp() {
   
   // Navigation and Slide Router States (CHANGE-1)
   const [currentScreen, setCurrentScreen] = useState<'Onboarding' | 'Verification' | 'Profiles' | 'ProfileDetails' | 'Settings'>('Onboarding');
+  // Default step 0 to avoid premature camera activation during startup.
+  // Step 3 is the face-capture step; it is set explicitly either by the onboarding
+  // flow or when the user taps "Add Profile" from the Verification screen.
   const [onboardingStep, setOnboardingStep] = useState(0);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
 
@@ -558,7 +636,36 @@ function MainApp() {
   const activeEmulator = isEmulator || settings.emulatorMode;
 
   const [cameraPosition, setCameraPosition] = useState<'front' | 'back'>('front');
-  const device = useCameraDevice(cameraPosition);
+  const [cameraDevices, setCameraDevices] = useState<any[]>([]);
+
+  useEffect(() => {
+    let active = true;
+    const checkDevices = () => {
+      try {
+        const devs = Camera.getAvailableCameraDevices();
+        if (devs.length > 0) {
+          setCameraDevices(devs);
+          console.log('[CameraDiscovery] Devices found:', devs.map(d => `${d.id} (${d.position})`));
+        } else {
+          console.log('[CameraDiscovery] No devices yet, retrying in 400ms...');
+          if (active) setTimeout(checkDevices, 400);
+        }
+      } catch (e) {
+        console.warn('[CameraDiscovery] Failed to get devices:', e);
+        if (active) setTimeout(checkDevices, 400);
+      }
+    };
+    checkDevices();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const device = useMemo(() => {
+    const found = cameraDevices.find(d => d.position === cameraPosition);
+    console.log('Selected Camera Device:', found ? `${found.id} (${found.position})` : 'undefined');
+    return found;
+  }, [cameraDevices, cameraPosition]);
   const format = useCameraFormat(device, [
     ...Templates.FrameProcessing,
     { videoAspectRatio: SCREEN_WIDTH / Dimensions.get('window').height },
@@ -614,6 +721,7 @@ function MainApp() {
   const [sessionActive, setSessionActive] = useState(false);
   const sessionExpiryRef = useRef<number>(0);
   const lastFailureIncrementRef = useRef<number>(0);
+  const lastFaceTimeRef = useRef<number>(0);
   
   // Lockout countdown timer
   const [lockoutTimeLeft, setLockoutTimeLeft] = useState(0);
@@ -630,9 +738,9 @@ function MainApp() {
   const [detectedBox, setDetectedBox] = useState<NormalizedBox | undefined>();
   const blazeAnchors = useMemo(() => generateBlazeFaceAnchors(), []);
 
-  const blazeFront = useTensorflowModel(BLAZEFACE_FRONT_MODEL, CPU_DELEGATES);
-  const blazeBack = useTensorflowModel(BLAZEFACE_BACK_MODEL, CPU_DELEGATES);
-  const mobileFaceNet = useTensorflowModel(MOBILEFACENET_MODEL, CPU_DELEGATES);
+  const blazeFront = useResilientTensorflowModel(BLAZEFACE_FRONT_MODEL, 'BlazeFace Front');
+  const blazeBack = useResilientTensorflowModel(BLAZEFACE_BACK_MODEL, 'BlazeFace Back');
+  const mobileFaceNet = useResilientTensorflowModel(MOBILEFACENET_MODEL, 'MobileFaceNet');
   const { resize, error: resizeError } = useSafeResizePlugin();
 
   const blazeFrontModel = blazeFront.state === 'loaded' ? blazeFront.model : undefined;
@@ -728,7 +836,7 @@ function MainApp() {
       if (value !== 'auto' && (value < 1 || value > 8)) {
         return false;
       }
-      workletInferenceFps = value === 'auto' ? 4 : value;
+      ws.inferenceFps = value === 'auto' ? 4 : value;
     }
     if (key === 'cameraPosition') {
       if (value !== 'front' && value !== 'back') {
@@ -870,6 +978,16 @@ function MainApp() {
     initializeApp();
   }, []);
 
+  useEffect(() => {
+    try {
+      const devices = Camera.getAvailableCameraDevices();
+      console.log('Available Camera Devices:', devices.map(d => `${d.id} (${d.position})`));
+      console.log('Camera Permission in App:', hasPermission);
+    } catch (e) {
+      console.warn('Failed to get available camera devices:', e);
+    }
+  }, [hasPermission]);
+
   // Stop background sync manager on unmount (CHANGE-6)
   useEffect(() => {
     return () => {
@@ -968,10 +1086,11 @@ function MainApp() {
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
-      const isForeground = nextAppState === 'active';
+      console.log('[AppState]', nextAppState);
+      const isForeground = nextAppState === 'active' || nextAppState === 'inactive';
       setIsAppForeground(isForeground);
       
-      if (!isForeground) {
+      if (nextAppState === 'background') {
         setAuthenticatedUser(null);
         setAuthState('IDLE');
         setSessionActive(false);
@@ -981,7 +1100,7 @@ function MainApp() {
         resetBlinkHistory();
         resetHeadMovementHistory();
         console.log('[Interruption] App backgrounded. Session and liveness state cleared.');
-      } else {
+      } else if (nextAppState === 'active') {
         console.log('[Interruption] App foregrounded. Camera and pipeline resuming.');
       }
     });
@@ -1081,15 +1200,33 @@ function MainApp() {
     embedding: Float32Array | null,
     qualityError: string | null,
     faceCount: number,
-    totalLatencyMs: number
+    totalLatencyMs: number,
+    spoofDetected: boolean = false,
+    spoofConfidence: number = 0.0
   ) => {
     const now = Date.now();
+
+    // Stabilize face count on JS thread (formerly inside worklet) (CHANGE-5 / BUGFIX)
+    if (faceCount === lastDetectedFacesCountRef.current) {
+      faceCountStableFramesRef.current++;
+    } else {
+      lastDetectedFacesCountRef.current = faceCount;
+      faceCountStableFramesRef.current = 1;
+    }
+    
+    let stableFaceCount = 1;
+    if (faceCountStableFramesRef.current >= 2) {
+      stableFaceCount = faceCount;
+    } else {
+      stableFaceCount = stableFaceCountRef.current;
+    }
+    stableFaceCountRef.current = stableFaceCount;
 
     inferenceLatenciesRef.current.push(totalLatencyMs);
 
     if (lastArrivalRef.current > 0) {
       const elapsed = now - lastArrivalRef.current;
-      const expectedGap = 1000 / workletInferenceFps;
+      const expectedGap = 1000 / ws.inferenceFps;
       if (elapsed > expectedGap * 1.5) {
         const dropped = Math.round(elapsed / expectedGap) - 1;
         droppedFramesRef.current += dropped;
@@ -1147,7 +1284,12 @@ function MainApp() {
       }
     }
 
-    if (activeUser == null) {
+    // During onboarding face registration, there is no activeUser yet.
+    // We still need the frame pipeline to run so latestEmbeddingRef is populated
+    // (enabling the Register button). Skip auth-only guards in this mode.
+    const isOnboardingCapture = currentScreen === 'Onboarding';
+
+    if (activeUser == null && !isOnboardingCapture) {
       setAuthState('IDLE');
       setStatus('No active profile. Select or register a profile.');
       setDetectedBox(undefined);
@@ -1156,16 +1298,19 @@ function MainApp() {
 
     // Active User Lockout Check (CHANGE-5, CHANGE-9)
     // Relaxed check if Emulator Mode is active to help virtual testing
-    const userLockout = lockoutExpiry[activeUser.name] || 0;
-    if (now < userLockout && !settings.emulatorMode) {
-      const secondsLeft = Math.ceil((userLockout - now) / 1000);
-      setAuthState('REJECTED');
-      setStatus(`ACCESS DENIED: ${activeUser.name} is locked out. Try again in ${secondsLeft}s.`);
-      setDetectedBox(box || undefined);
-      return;
+    // Skipped during onboarding (activeUser is null, no lockout applicable)
+    if (activeUser != null) {
+      const userLockout = lockoutExpiry[activeUser.name] || 0;
+      if (now < userLockout && !settings.emulatorMode) {
+        const secondsLeft = Math.ceil((userLockout - now) / 1000);
+        setAuthState('REJECTED');
+        setStatus(`ACCESS DENIED: ${activeUser.name} is locked out. Try again in ${secondsLeft}s.`);
+        setDetectedBox(box || undefined);
+        return;
+      }
     }
 
-    if (faceCount > 1) {
+    if (stableFaceCount > 1) {
       setDetectedBox(box || undefined);
       latestEmbeddingRef.current = null;
       setLivenessBlink(false);
@@ -1201,21 +1346,33 @@ function MainApp() {
     if (box == null || keypoints == null || blazePixels == null) {
       setDetectedBox(undefined);
       latestEmbeddingRef.current = null;
-      setLivenessBlink(false);
-      setLivenessHead(false);
-      resetBlinkHistory();
-      resetHeadMovementHistory();
-      setRollingScores([]);
-      setAuthState('IDLE');
+      
+      const timeSinceLastFace = now - lastFaceTimeRef.current;
+      if (lastFaceTimeRef.current > 0 && timeSinceLastFace > 800) {
+        console.log(`[Tracking] Target lost for ${timeSinceLastFace}ms (timeout: 800ms). Resetting liveness & auth states.`);
+        setLivenessBlink(false);
+        setLivenessHead(false);
+        resetBlinkHistory();
+        resetHeadMovementHistory();
+        resetAntiSpoofHistory();
+        setRollingScores([]);
+        setAuthState('IDLE');
+      } else {
+        setAuthState('SCANNING');
+      }
       
       const storedCount = Object.keys(storedEmbeddings).length;
-      if (storedCount === 0) {
+      if (isOnboardingCapture) {
+        setStatus('Align your face inside the guide circle.');
+      } else if (storedCount === 0) {
         setStatus('No registered profiles. Please register first.');
       } else {
-        setStatus(`Align face in the guide to authenticate: ${activeUser.name}`);
+        setStatus(`Align face in the guide to authenticate: ${activeUser?.name}`);
       }
       return;
     }
+
+    lastFaceTimeRef.current = now;
 
     setDetectedBox(box);
 
@@ -1258,13 +1415,28 @@ function MainApp() {
 
     latestEmbeddingRef.current = embedding;
 
+    // In onboarding registration mode, we only need the embedding captured.
+    // Skip authentication/liveness logic entirely — just confirm face is ready.
+    if (isOnboardingCapture) {
+      setDetectedBox(box || undefined);
+      setStatus('Face captured! Enter your name above and tap Register.');
+      return;
+    }
+
+    // After this point: not in onboarding mode.
+    // TypeScript cannot infer activeUser != null from the isOnboardingCapture guard above,
+    // so we add this explicit check. At runtime it is unreachable.
+    if (activeUser == null) return;
     let blinkDetected = livenessBlink;
     if (!blinkDetected) {
       blinkDetected = detectBlink(blazePixels, keypoints, activeEmulator);
       if (blinkDetected) {
         setLivenessBlink(true);
         lastBlinkTimeRef.current = Date.now();
+        console.log('Blink verified');
       }
+    } else {
+      console.log('Blink verified');
     }
 
     let headMoved = livenessHead;
@@ -1273,6 +1445,21 @@ function MainApp() {
       if (headMoved) {
         setLivenessHead(true);
         lastHeadMovementTimeRef.current = Date.now();
+        console.log('Head movement verified');
+      }
+    } else {
+      console.log('Head movement verified');
+    }
+
+    const blinkConf = getBlinkConfidence();
+    const headConf = getHeadMovementConfidence();
+    const currentLivenessConfidence = (blinkConf + headConf) / 2;
+    console.log(`Liveness confidence score: ${currentLivenessConfidence}`);
+
+    if (spoofDetected) {
+      console.log('Spoof detected');
+      if (spoofConfidence >= 0.70) {
+        console.log('Replay attack suspected');
       }
     }
 
@@ -1322,6 +1509,7 @@ function MainApp() {
     const hysteresisPassed = sessionActive && bestScore >= 0.80;
 
     if (livenessPassed && (similarityPassed || hysteresisPassed)) {
+      console.log('Live face verified');
       lastAuthTimeRef.current = Date.now();
       sessionExpiryRef.current = Date.now() + 30000;
       setSessionActive(true);
@@ -1435,13 +1623,12 @@ function MainApp() {
     }
 
     // Zero out local embedding and clean up references (CHANGE-11)
-    if (currentScreen !== 'Onboarding') {
-      if (latestEmbeddingRef.current) {
-        latestEmbeddingRef.current.fill(0);
-        latestEmbeddingRef.current = null;
-      }
-      embedding.fill(0);
+    // (Onboarding path already returned early above; cleanup always runs here)
+    if (latestEmbeddingRef.current) {
+      latestEmbeddingRef.current.fill(0);
+      latestEmbeddingRef.current = null;
     }
+    embedding.fill(0);
   }, [storedEmbeddings, rollingScores, livenessBlink, livenessHead, activeUser, failedAttempts, lockoutExpiry, sessionActive, authenticatedUser, activeEmulator, currentScreen]);
 
 
@@ -1614,8 +1801,8 @@ function MainApp() {
   const frameProcessor = useFrameProcessor(
     frame => {
       'worklet';
-      if (workletWarmUpFrames < 4) {
-        workletWarmUpFrames++;
+      if (ws.warmUpFrames < 4) {
+        ws.warmUpFrames = ws.warmUpFrames + 1;
         return;
       }
       const blazeBox = boxedBlaze.value;
@@ -1631,7 +1818,7 @@ function MainApp() {
         return;
       }
  
-      runAtTargetFps(workletInferenceFps, () => {
+      runAtTargetFps(ws.inferenceFps, () => {
         'worklet';
         if (!frame.isValid) {
           return;
@@ -1658,7 +1845,7 @@ function MainApp() {
  
           if (blazeOutputs.length < 2) {
             const latency = performance.now() - startTime;
-            handleFrameResult(null, null, null, null, null, 0, latency);
+            handleFrameResult(null, null, null, null, null, 0, latency, false, 0.0);
             return;
           }
  
@@ -1669,7 +1856,7 @@ function MainApp() {
           
           let validFaceCount = 0;
           let bestFaceIdx = -1;
-          let bestConfidence = -Infinity;
+          let maxArea = -Infinity;
           
           for (let j = 0; j < preAllocatedBoxes.count; j++) {
             const w = preAllocatedBoxes.xMax[j] - preAllocatedBoxes.xMin[j];
@@ -1681,44 +1868,63 @@ function MainApp() {
               continue;
             }
             validFaceCount++;
-            if (conf > bestConfidence) {
-              bestConfidence = conf;
+            // Closest-face selection: select the face with the largest area (Phase 5)
+            if (area > maxArea) {
+              maxArea = area;
               bestFaceIdx = j;
             }
           }
           
-          if (validFaceCount === lastDetectedFacesCountRef.current) {
-            faceCountStableFramesRef.current++;
-          } else {
-            lastDetectedFacesCountRef.current = validFaceCount;
-            faceCountStableFramesRef.current = 1;
-          }
-          
-          let stableFaceCount = 1;
-          if (faceCountStableFramesRef.current >= 2) {
-            stableFaceCount = validFaceCount;
-          } else {
-            stableFaceCount = stableFaceCountRef.current;
-          }
-          stableFaceCountRef.current = stableFaceCount;
-          
-          if (stableFaceCount > 1) {
+          if (validFaceCount > 1) {
             const latency = performance.now() - startTime;
-            handleFrameResult(null, null, null, null, null, stableFaceCount, latency);
+            handleFrameResult(null, null, null, null, null, validFaceCount, latency, false, 0.0);
             return;
           }
           
           if (bestFaceIdx === -1) {
             const latency = performance.now() - startTime;
-            handleFrameResult(null, null, null, null, null, 0, latency);
+            handleFrameResult(null, null, null, null, null, 0, latency, false, 0.0);
             return;
           }
           
-          const bestBox = {
+          const rawBoxRaw = {
             xMin: preAllocatedBoxes.xMin[bestFaceIdx],
             yMin: preAllocatedBoxes.yMin[bestFaceIdx],
             xMax: preAllocatedBoxes.xMax[bestFaceIdx],
             yMax: preAllocatedBoxes.yMax[bestFaceIdx],
+          };
+
+          // Double Exponential Smoothing for Bounding Box (Phase 11 / CHANGE-16)
+          const smoothAlpha = 0.45;
+          const smoothBeta = 0.25;
+          
+          if (ws.smoothedBoxXMin < 0) {
+            ws.smoothedBoxXMin = rawBoxRaw.xMin;
+            ws.smoothedBoxYMin = rawBoxRaw.yMin;
+            ws.smoothedBoxXMax = rawBoxRaw.xMax;
+            ws.smoothedBoxYMax = rawBoxRaw.yMax;
+          } else {
+            const lastXMin = ws.smoothedBoxXMin;
+            const lastYMin = ws.smoothedBoxYMin;
+            const lastXMax = ws.smoothedBoxXMax;
+            const lastYMax = ws.smoothedBoxYMax;
+            
+            ws.smoothedBoxXMin = smoothAlpha * rawBoxRaw.xMin + (1 - smoothAlpha) * (ws.smoothedBoxXMin + ws.smoothedBoxXMinTrend);
+            ws.smoothedBoxYMin = smoothAlpha * rawBoxRaw.yMin + (1 - smoothAlpha) * (ws.smoothedBoxYMin + ws.smoothedBoxYMinTrend);
+            ws.smoothedBoxXMax = smoothAlpha * rawBoxRaw.xMax + (1 - smoothAlpha) * (ws.smoothedBoxXMax + ws.smoothedBoxXMaxTrend);
+            ws.smoothedBoxYMax = smoothAlpha * rawBoxRaw.yMax + (1 - smoothAlpha) * (ws.smoothedBoxYMax + ws.smoothedBoxYMaxTrend);
+            
+            ws.smoothedBoxXMinTrend = smoothBeta * (ws.smoothedBoxXMin - lastXMin) + (1 - smoothBeta) * ws.smoothedBoxXMinTrend;
+            ws.smoothedBoxYMinTrend = smoothBeta * (ws.smoothedBoxYMin - lastYMin) + (1 - smoothBeta) * ws.smoothedBoxYMinTrend;
+            ws.smoothedBoxXMaxTrend = smoothBeta * (ws.smoothedBoxXMax - lastXMax) + (1 - smoothBeta) * ws.smoothedBoxXMaxTrend;
+            ws.smoothedBoxYMaxTrend = smoothBeta * (ws.smoothedBoxYMax - lastYMax) + (1 - smoothBeta) * ws.smoothedBoxYMaxTrend;
+          }
+          
+          const bestBox = {
+            xMin: ws.smoothedBoxXMin,
+            yMin: ws.smoothedBoxYMin,
+            xMax: ws.smoothedBoxXMax,
+            yMax: ws.smoothedBoxYMax,
           };
           
           const bestKeypoints = [
@@ -1729,42 +1935,91 @@ function MainApp() {
             { x: preAllocatedBoxes.keypointsX[bestFaceIdx * 6 + 4], y: preAllocatedBoxes.keypointsY[bestFaceIdx * 6 + 4] },
             { x: preAllocatedBoxes.keypointsX[bestFaceIdx * 6 + 5], y: preAllocatedBoxes.keypointsY[bestFaceIdx * 6 + 5] },
           ];
+
+          const nowMs = Date.now();
+          
+          // Tracking stability & loss recovery timer logic (CHANGE-5, CHANGE-6)
+          let isSameFace = false;
+          if (ws.lastTrackedNoseX > -900 && ws.lastTrackedNoseY > -900) {
+            const dx = bestKeypoints[2].x - ws.lastTrackedNoseX;
+            const dy = bestKeypoints[2].y - ws.lastTrackedNoseY;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < 0.15) {
+              isSameFace = true;
+            }
+          }
+          
+          if (!isSameFace) {
+            ws.faceStabilityStartTime = nowMs;
+            ws.lastTrackedNoseX = bestKeypoints[2].x;
+            ws.lastTrackedNoseY = bestKeypoints[2].y;
+          }
+          ws.lastFaceDetectedTime = nowMs;
+
+          const faceStableDuration = nowMs - ws.faceStabilityStartTime;
+          const isFaceStable = faceStableDuration >= 1200; // Require 1.2s persistence (Change-5)
+
+          // Thermal Protection check (CHANGE-7)
+          let skipHeavyChecksDueToThermal = false;
+          if (ws.latencyCount >= 5) {
+            const avg = (ws.latency1 + ws.latency2 + ws.latency3 + ws.latency4 + ws.latency5) / 5;
+            if (avg > 350) {
+              ws.inferenceFps = 1;
+              skipHeavyChecksDueToThermal = true;
+            } else if (avg > 220) {
+              ws.inferenceFps = 2;
+              skipHeavyChecksDueToThermal = true;
+            } else {
+              ws.inferenceFps = 4;
+            }
+          }
+
+          // Throttled Heavy Spoof analysis (CHANGE-1)
+          const runHeavySpoof = (nowMs - ws.lastHeavySpoofTime > 750) && !skipHeavyChecksDueToThermal;
+          if (runHeavySpoof) {
+            ws.lastHeavySpoofTime = nowMs;
+            const spoofRes = verifyAntiSpoofing(
+              blazePixels as Float32Array,
+              blazeInput.width,
+              blazeInput.height,
+              bestBox,
+              bestKeypoints,
+              activeEmulator
+            );
+            ws.cachedSpoofResult = spoofRes.spoofDetected;
+            ws.cachedSpoofConfidence = spoofRes.spoofConfidence;
+          }
+
+          const spoofDetected = ws.cachedSpoofResult;
+
+          // 1. Run face-quality validation BEFORE MobileFaceNet embedding extraction (CHANGE-2)
+          const quality = validateFaceQuality(
+            blazePixels as Float32Array,
+            blazeInput.width,
+            blazeInput.height,
+            bestBox,
+            bestKeypoints,
+            activeEmulator
+          );
           
           let qualityError: string | null = null;
-          
-          if (!checkFaceSize(bestBox, 0.22)) {
+          if (!isFaceStable) {
+            qualityError = 'Hold still...';
+          } else if (quality.tooSmall) {
             qualityError = 'Face too small';
-          } else if (!checkEdgeProximity(bestBox, 0.05)) {
+          } else if (quality.alignmentInvalid || quality.occluded) {
             qualityError = 'Face alignment invalid';
-          } else if (!checkFaceAlignment(bestKeypoints, activeEmulator)) {
-            qualityError = 'Face alignment invalid';
-          } else {
-            let isRange255 = false;
-            for (let k = 0; k < Math.min(blazePixels.length, 100); k++) {
-              if (blazePixels[k] > 1.0) {
-                isRange255 = true;
-                break;
-              }
-            }
-            
-            if (!checkBrightness(blazePixels as Float32Array, blazeInput.width, blazeInput.height, isRange255, activeEmulator)) {
-              qualityError = 'Face too dark';
-            } else {
-              workletFrameCounter++;
-              const validationPeriod = workletInferenceFps <= 2 ? 10 : 5;
-              const runBlur = (workletFrameCounter % validationPeriod === 0) || (authState === 'SCANNING') || (authState === 'DETECTING');
-              if (runBlur) {
-                workletCachedBlurPassed = checkBlur(blazePixels as Float32Array, blazeInput.width, blazeInput.height, isRange255, activeEmulator);
-              }
-              if (!workletCachedBlurPassed) {
-                qualityError = 'Face too blurry';
-              }
-            }
+          } else if (quality.lowLightDetected) {
+            qualityError = 'Face too dark';
+          } else if (quality.blurDetected) {
+            qualityError = 'Face too blurry';
+          } else if (spoofDetected) {
+            qualityError = 'Spoof detected';
           }
           
           if (qualityError != null) {
             const latency = performance.now() - startTime;
-            handleFrameResult(bestBox, bestKeypoints, blazePixels as Float32Array, null, qualityError, stableFaceCount, latency);
+            handleFrameResult(bestBox, bestKeypoints, blazePixels as Float32Array, null, qualityError, validFaceCount, latency, spoofDetected, ws.cachedSpoofConfidence);
             return;
           }
           
@@ -1793,39 +2048,39 @@ function MainApp() {
           } catch (tfliteErr) {
             console.log('TFLite inference error: ' + String(tfliteErr));
             const latency = performance.now() - startTime;
-            handleFrameResult(bestBox, bestKeypoints, blazePixels as Float32Array, null, null, stableFaceCount, latency);
+            handleFrameResult(bestBox, bestKeypoints, blazePixels as Float32Array, null, null, validFaceCount, latency, spoofDetected, ws.cachedSpoofConfidence);
             return;
           }
           
           if (embeddingOutputs.length === 0 || embeddingOutputs[0].byteLength % 4 !== 0) {
             const latency = performance.now() - startTime;
-            handleFrameResult(bestBox, bestKeypoints, blazePixels as Float32Array, null, null, stableFaceCount, latency);
+            handleFrameResult(bestBox, bestKeypoints, blazePixels as Float32Array, null, null, validFaceCount, latency, spoofDetected, ws.cachedSpoofConfidence);
             return;
           }
  
           const embedding = new Float32Array(embeddingOutputs[0]);
           const latency = performance.now() - startTime;
           
-          workletLatency5 = workletLatency4;
-          workletLatency4 = workletLatency3;
-          workletLatency3 = workletLatency2;
-          workletLatency2 = workletLatency1;
-          workletLatency1 = latency;
-          if (workletLatencyCount < 5) {
-            workletLatencyCount++;
+          ws.latency5 = ws.latency4;
+          ws.latency4 = ws.latency3;
+          ws.latency3 = ws.latency2;
+          ws.latency2 = ws.latency1;
+          ws.latency1 = latency;
+          if (ws.latencyCount < 5) {
+            ws.latencyCount = ws.latencyCount + 1;
           }
-          if (workletLatencyCount >= 5) {
-            const avg = (workletLatency1 + workletLatency2 + workletLatency3 + workletLatency4 + workletLatency5) / 5;
+          if (ws.latencyCount >= 5) {
+            const avg = (ws.latency1 + ws.latency2 + ws.latency3 + ws.latency4 + ws.latency5) / 5;
             if (avg > 250) {
-              workletInferenceFps = 2;
+              ws.inferenceFps = 2;
             } else if (avg > 450) {
-              workletInferenceFps = 1;
+              ws.inferenceFps = 1;
             } else if (avg < 140) {
-              workletInferenceFps = 4;
+              ws.inferenceFps = 4;
             }
           }
           
-          handleFrameResult(bestBox, bestKeypoints, blazePixels as Float32Array, embedding, null, stableFaceCount, latency);
+          handleFrameResult(bestBox, bestKeypoints, blazePixels as Float32Array, embedding, null, validFaceCount, latency, spoofDetected, ws.cachedSpoofConfidence);
         } catch (error) {
           console.log('Frame processor error: ' + String(error));
           reportRuntimeError(String(error));
