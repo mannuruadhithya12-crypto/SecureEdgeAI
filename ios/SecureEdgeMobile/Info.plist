@@ -39,7 +39,7 @@
 	<key>NSFaceIDUsageDescription</key>
 	<string>SecureEdge AI uses Face ID to authenticate and verify your identity securely.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string></string>
+	<string>Location permission is required for secure attendance verification.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>SecureEdge AI may require microphone access for advanced liveness detection features.</string>
 	<key>UILaunchStoryboardName</key>
