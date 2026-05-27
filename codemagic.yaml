@@ -1,0 +1,313 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# Codemagic CI/CD — SecureEdgeAI / SecureEdgeMobile
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Project   : SecureEdgeMobile (React Native 0.85.3 — Bare Workflow)
+# Repo      : https://github.com/mannuruadhithya12-crypto/SecureEdgeAI
+# App root  : /  (repo root — App.tsx, ios/, android/, package.json)
+#
+# Key stack :
+#   • React Native 0.85.3 + Hermes
+#   • VisionCamera v4.6.4 + react-native-worklets-core v1.6.3
+#   • react-native-fast-tflite v3.0.1 (BlazeFace + MobileFaceNet)
+#   • react-native-sqlcipher-storage v0.0.3 (SQLCipher)
+#   • react-native-permissions v5.5.1
+#   • iOS deployment target: 15.1
+#   • Swift 5.0, Xcode latest (16.x), arm64
+#
+# Workflows:
+#   1. ios-debug     — Simulator build, no code signing.  Validates the full
+#                      native+JS pipeline compiles cleanly on every push.
+#   2. ios-release   — Device archive → IPA.  Requires Apple Developer
+#                      credentials configured in Codemagic dashboard.
+#                      Triggered by version tags (v*).
+#
+# ══════════════════════════════════════════════════════════════════════════════
+
+definitions:
+  # Shared environment variables used by both workflows
+  env_vars: &common_env
+    XCODE_SCHEME: SecureEdgeMobile
+    XCODE_WORKSPACE: ios/SecureEdgeMobile.xcworkspace
+    BUNDLE_ID: org.reactjs.native.example.SecureEdgeMobile
+    # Give the JS bundler more memory — needed for large TS/TSX files
+    NODE_OPTIONS: "--max-old-space-size=4096"
+    # Disable Flipper in pod install
+    NO_FLIPPER: "1"
+    RCT_NEW_ARCH_ENABLED: "0"
+
+  # Shared dependency cache paths
+  caches: &dependency_caches
+    cache_paths:
+      - $HOME/Library/Caches/CocoaPods    # CocoaPods source cache
+      - $HOME/.npm                         # npm global cache
+      - $HOME/.gem                         # Gem cache (bundler, xcpretty)
+      - node_modules                       # JS dependencies
+      - ios/Pods                           # CocoaPods build artifacts
+
+  # Common setup scripts used by all workflows
+  setup_scripts: &setup_scripts
+    - name: "🔍 Environment diagnostics"
+      script: |
+        echo "=== System ==="
+        sw_vers
+        echo "=== Xcode ==="
+        xcodebuild -version
+        echo "=== Node ==="
+        node --version
+        npm --version
+        echo "=== Ruby ==="
+        ruby --version
+        gem --version
+        echo "=== Bundler ==="
+        bundle --version 2>/dev/null || echo "bundler not installed yet"
+        echo "=== CocoaPods ==="
+        pod --version 2>/dev/null || echo "CocoaPods not installed yet"
+        echo "=== Available Simulators ==="
+        xcrun simctl list devices available | grep -E "iPhone (15|16)" | head -5
+
+    - name: "📦 Install Node dependencies (npm ci)"
+      script: |
+        npm ci --prefer-offline --no-audit --no-fund
+        echo "✅ node_modules installed: $(ls node_modules | wc -l | tr -d ' ') packages"
+
+    - name: "💎 Install Ruby gems (Bundler + CocoaPods + xcpretty)"
+      script: |
+        gem install bundler --no-document
+        bundle install --jobs 4 --retry 3
+        echo "✅ Gems: $(bundle exec gem list | wc -l | tr -d ' ') installed"
+        bundle exec pod --version
+
+    - name: "🍎 Install CocoaPods dependencies (pod install)"
+      script: |
+        set -e
+        cd ios
+        echo "Running pod install..."
+        bundle exec pod install --repo-update 2>&1 | tail -40
+        echo "✅ Pods installed"
+        ls -la Pods/ | head -20
+        # Verify critical pods are present
+        echo "=== Verifying critical pods ==="
+        ls Pods/ | grep -E "VisionCamera|fast-tflite|TensorFlowLite|SQLCipher|ReactWorklets|Worklets" || true
+        echo "=== Workspace generated ==="
+        ls -la ../$XCODE_WORKSPACE 2>/dev/null && echo "✅ xcworkspace exists" || echo "⚠️  xcworkspace not found"
+
+workflows:
+  # ────────────────────────────────────────────────────────────────────────────
+  # WORKFLOW 1 — iOS Debug (Simulator build, no code signing)
+  #
+  # Purpose  : Verify the full build pipeline — JS bundle, CocoaPods,
+  #            VisionCamera, TFLite, SQLCipher, Hermes, and worklets —
+  #            compiles without errors on every push to main.
+  #
+  # Triggered: Every push to main / feature/* branches + PRs
+  # Output   : .app bundle (simulator), build logs
+  # Signing  : None — CODE_SIGNING_ALLOWED=NO
+  # ────────────────────────────────────────────────────────────────────────────
+  ios-debug:
+    name: "🧪 iOS Debug — Simulator Build"
+    max_build_duration: 90
+    instance_type: mac_mini_m2
+
+    environment:
+      vars:
+        <<: *common_env
+        BUILD_CONFIGURATION: Debug
+      node: v22.11.0
+      xcode: latest
+      cocoapods: default
+
+    cache:
+      <<: *dependency_caches
+
+    triggering:
+      events:
+        - push
+        - pull_request
+      branch_patterns:
+        - pattern: main
+          include: true
+          source: true
+        - pattern: "feature/*"
+          include: true
+          source: true
+        - pattern: "fix/*"
+          include: true
+          source: true
+
+    scripts:
+      - *setup_scripts
+
+      - name: "🔨 Build iOS (Simulator — no code signing)"
+        script: |
+          set -o pipefail
+
+          echo "=== Build Parameters ==="
+          echo "Workspace   : $XCODE_WORKSPACE"
+          echo "Scheme      : $XCODE_SCHEME"
+          echo "Config      : $BUILD_CONFIGURATION"
+          echo "SDK         : iphonesimulator"
+          echo "Destination : generic/platform=iOS Simulator"
+
+          xcodebuild \
+            -workspace "$XCODE_WORKSPACE" \
+            -scheme "$XCODE_SCHEME" \
+            -configuration "$BUILD_CONFIGURATION" \
+            -sdk iphonesimulator \
+            -destination "generic/platform=iOS Simulator" \
+            IPHONEOS_DEPLOYMENT_TARGET=15.1 \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            ENABLE_BITCODE=NO \
+            -derivedDataPath "$CM_BUILD_DIR/DerivedData" \
+            | bundle exec xcpretty --color --report junit \
+              --output "$CM_BUILD_DIR/build-reports/junit.xml"
+
+          echo "✅ Build completed successfully"
+
+      - name: "📊 Build Summary"
+        script: |
+          echo "=== Build Artifacts ==="
+          find "$CM_BUILD_DIR/DerivedData/Build/Products" -name "*.app" 2>/dev/null \
+            | while read app; do
+                echo "📱 App: $app"
+                echo "   Size: $(du -sh "$app" | cut -f1)"
+              done
+
+          echo "=== Key Native Libraries ==="
+          find "$CM_BUILD_DIR/DerivedData" -name "libPods-SecureEdgeMobile.a" 2>/dev/null \
+            | head -3 \
+            | while read lib; do
+                echo "📚 Linked: $lib ($(du -sh "$lib" | cut -f1))"
+              done
+
+    artifacts:
+      # The compiled simulator .app bundle
+      - $CM_BUILD_DIR/DerivedData/Build/Products/**/*.app
+      # JUnit XML for test reporting
+      - $CM_BUILD_DIR/build-reports/junit.xml
+      # Raw xcodebuild logs for debugging
+      - /tmp/xcodebuild_logs/*.log
+
+    publishing:
+      email:
+        recipients:
+          - mannuruadhithya12@gmail.com
+        notify:
+          success: true
+          failure: true
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # WORKFLOW 2 — iOS Release (Archive → IPA)
+  #
+  # Purpose  : Build a signed IPA for TestFlight / App Store distribution.
+  #
+  # ⚠️  SETUP REQUIRED before using this workflow:
+  #    1. Add Apple Developer credentials to Codemagic dashboard:
+  #       - APP_STORE_CONNECT_ISSUER_ID
+  #       - APP_STORE_CONNECT_KEY_IDENTIFIER
+  #       - APP_STORE_CONNECT_PRIVATE_KEY (the .p8 file content, encrypted)
+  #       - CERTIFICATE_PRIVATE_KEY       (P12 certificate key, encrypted)
+  #    2. Create ios/ExportOptions.plist (see comments below)
+  #    3. Update BUNDLE_ID to your real App Store bundle identifier
+  #    4. Remove CODE_SIGNING_ALLOWED=NO from the archive step
+  #
+  # Triggered: Version tags matching v* (e.g. v1.0.0, v1.2.3-rc1)
+  # Output   : .xcarchive + .ipa artifacts
+  # ────────────────────────────────────────────────────────────────────────────
+  ios-release:
+    name: "🚀 iOS Release — Archive & IPA"
+    max_build_duration: 120
+    instance_type: mac_mini_m2
+
+    environment:
+      vars:
+        <<: *common_env
+        BUILD_CONFIGURATION: Release
+        # ── Code Signing ────────────────────────────────────────────────────
+        # Add the following as encrypted environment variables in Codemagic
+        # dashboard (Team → Integrations → App Store Connect API or manually):
+        #
+        # APP_STORE_CONNECT_ISSUER_ID: <your-issuer-id>
+        # APP_STORE_CONNECT_KEY_IDENTIFIER: <your-key-id>
+        # APP_STORE_CONNECT_PRIVATE_KEY: <contents of AuthKey_xxx.p8>
+        # CERTIFICATE_PRIVATE_KEY: <private key for your distribution cert>
+      node: v22.11.0
+      xcode: latest
+      cocoapods: default
+      # ── Uncomment after setting up App Store Connect in Codemagic ─────────
+      # ios_signing:
+      #   distribution_type: app_store
+      #   bundle_identifier: org.reactjs.native.example.SecureEdgeMobile
+
+    cache:
+      <<: *dependency_caches
+
+    triggering:
+      events:
+        - tag
+      tag_patterns:
+        - pattern: "v*"
+          include: true
+
+    scripts:
+      - *setup_scripts
+
+      - name: "🔨 Archive iOS Release"
+        script: |
+          set -o pipefail
+          ARCHIVE_PATH="$CM_BUILD_DIR/Archive/SecureEdgeMobile.xcarchive"
+
+          echo "=== Archiving ==="
+          echo "Workspace : $XCODE_WORKSPACE"
+          echo "Scheme    : $XCODE_SCHEME"
+          echo "Archive   : $ARCHIVE_PATH"
+
+          xcodebuild \
+            -workspace "$XCODE_WORKSPACE" \
+            -scheme "$XCODE_SCHEME" \
+            -configuration "$BUILD_CONFIGURATION" \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            IPHONEOS_DEPLOYMENT_TARGET=15.1 \
+            ENABLE_BITCODE=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            -archivePath "$ARCHIVE_PATH" \
+            archive \
+            | bundle exec xcpretty --color
+
+          echo "✅ Archive created: $ARCHIVE_PATH"
+          ls -la "$ARCHIVE_PATH"
+
+      # ── Export IPA (uncomment after code signing is set up) ──────────────
+      # - name: "📦 Export IPA"
+      #   script: |
+      #     xcodebuild -exportArchive \
+      #       -archivePath "$CM_BUILD_DIR/Archive/SecureEdgeMobile.xcarchive" \
+      #       -exportOptionsPlist ios/ExportOptions.plist \
+      #       -exportPath "$CM_BUILD_DIR/IPA" \
+      #       | bundle exec xcpretty --color
+      #     echo "✅ IPA exported"
+      #     ls -la "$CM_BUILD_DIR/IPA/"
+
+    artifacts:
+      - $CM_BUILD_DIR/Archive/**/*.xcarchive
+      # - $CM_BUILD_DIR/IPA/**/*.ipa     # uncomment after code signing
+      - /tmp/xcodebuild_logs/*.log
+
+    publishing:
+      email:
+        recipients:
+          - mannuruadhithya12@gmail.com
+        notify:
+          success: true
+          failure: true
+      # ── TestFlight (uncomment after App Store Connect credentials set up) ─
+      # app_store_connect:
+      #   api_key: $APP_STORE_CONNECT_PRIVATE_KEY
+      #   key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
+      #   issuer_id: $APP_STORE_CONNECT_ISSUER_ID
+      #   submit_to_testflight: true

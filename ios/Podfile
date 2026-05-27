@@ -5,8 +5,18 @@ require Pod::Executable.execute_command('node', ['-p',
     {paths: [process.argv[1]]},
   )', __dir__]).strip
 
-platform :ios, min_ios_version_supported
+# ── Deployment Target ────────────────────────────────────────────────────────
+# Must match IPHONEOS_DEPLOYMENT_TARGET in the Xcode project (15.1).
+# VisionCamera v4, fast-tflite v3, and react-native-worklets-core all require
+# iOS 13+; 15.1 satisfies all constraints.
+platform :ios, '15.1'
 prepare_react_native_project!
+
+# ── Flipper: disabled for CI/CD compatibility ────────────────────────────────
+# Flipper adds significant build time, is incompatible with many M-series
+# Codemagic builders, and is not needed for production or CI builds.
+ENV['NO_FLIPPER'] = '1'
+ENV['RCT_NEW_ARCH_ENABLED'] = '0'
 
 linkage = ENV['USE_FRAMEWORKS']
 if linkage != nil
@@ -19,16 +29,63 @@ target 'SecureEdgeMobile' do
 
   use_react_native!(
     :path => config[:reactNativePath],
-    # An absolute path to your application root.
-    :app_path => "#{Pod::Config.instance.installation_root}/.."
+    # Absolute path to the application root (one level above ios/)
+    :app_path => "#{Pod::Config.instance.installation_root}/..",
+    # Hermes JS engine — required for react-native-worklets-core & VisionCamera
+    :hermes_enabled => true,
+    # Fabric (new architecture) — disabled until all pods support it
+    :fabric_enabled => false,
   )
 
   post_install do |installer|
+    # ── react_native_post_install ──────────────────────────────────────────
+    # Must be called first so RN can patch build settings before we override.
     react_native_post_install(
       installer,
       config[:reactNativePath],
       :mac_catalyst_enabled => false,
-      # :ccache_enabled => true
     )
+
+    # ── Per-pod build setting overrides ───────────────────────────────────
+    installer.pods_project.targets.each do |target|
+      target.build_configurations.each do |build_config|
+        # Enforce a consistent deployment target across all pods.
+        # Some pods default to iOS 9/10 which causes archive warnings and
+        # linker errors against our 15.1 target.
+        build_config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.1'
+
+        # Suppress all warnings from third-party pods in CI log output.
+        # Makes it easier to spot real errors.
+        build_config.build_settings['GCC_WARN_INHIBIT_ALL_WARNINGS'] = 'YES'
+        build_config.build_settings['SWIFT_SUPPRESS_WARNINGS'] = 'YES'
+
+        # Fix C++ standard — react-native 0.75+ requires C++20.
+        build_config.build_settings['CLANG_CXX_LANGUAGE_STANDARD'] = 'c++20'
+
+        # Ensure bitcode is OFF — some TFLite / fast-tflite prebuilt binaries
+        # do not contain bitcode and linking fails if bitcode is required.
+        build_config.build_settings['ENABLE_BITCODE'] = 'NO'
+      end
+
+      # ── VisionCamera v4: Frame Processor plugin support ──────────────────
+      # VisionCamera requires OTHER_SWIFT_FLAGS to enable the frame processor
+      # macro so that plugin registration works correctly at runtime.
+      if target.name == 'VisionCamera'
+        target.build_configurations.each do |build_config|
+          swift_flags = build_config.build_settings['OTHER_SWIFT_FLAGS'] || '$(inherited)'
+          unless swift_flags.include?('-DVISION_CAMERA_ENABLE_FRAME_PROCESSORS')
+            build_config.build_settings['OTHER_SWIFT_FLAGS'] =
+              "#{swift_flags} -DVISION_CAMERA_ENABLE_FRAME_PROCESSORS"
+          end
+        end
+      end
+    end
+
+    # ── Fix "Aggregate Targets" that lack IPHONEOS_DEPLOYMENT_TARGET ──────
+    # Aggregate targets (e.g. Pods-SecureEdgeMobile) do not appear in the
+    # targets loop above; patch them via the project build configurations.
+    installer.pods_project.build_configurations.each do |build_config|
+      build_config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.1'
+    end
   end
 end

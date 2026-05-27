@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  ExportOptions.plist — used by the ios-release Codemagic workflow
+  when running `xcodebuild -exportArchive`.
+
+  SETUP REQUIRED:
+    1. Set `method` to your distribution type:
+         app-store         → TestFlight / App Store
+         ad-hoc            → Ad-hoc distribution (registered devices)
+         development       → Development builds
+         enterprise        → In-house enterprise distribution
+    2. Set `teamID` to your Apple Developer Team ID
+    3. Set `signingCertificate` to your certificate name
+    4. Set `provisioningProfiles` with your bundle ID → provisioning profile name
+    5. Uncomment this file's usage in codemagic.yaml (ios-release workflow)
+-->
+<plist version="1.0">
+<dict>
+  <!-- Distribution method -->
+  <key>method</key>
+  <string>app-store</string>
+
+  <!-- Apple Developer Team ID (10-character string) -->
+  <key>teamID</key>
+  <string>XXXXXXXXXX</string>
+
+  <!-- Set to false to skip App Store validation during export -->
+  <key>uploadBitcode</key>
+  <false/>
+
+  <key>uploadSymbols</key>
+  <true/>
+
+  <!-- Signing style: manual or automatic -->
+  <key>signingStyle</key>
+  <string>automatic</string>
+
+  <!-- If using manual signing, specify the certificate and provisioning profile:
+  <key>signingCertificate</key>
+  <string>Apple Distribution: Your Name (XXXXXXXXXX)</string>
+
+  <key>provisioningProfiles</key>
+  <dict>
+    <key>org.reactjs.native.example.SecureEdgeMobile</key>
+    <string>SecureEdgeMobile AppStore</string>
+  </dict>
+  -->
+
+  <!-- Thinning: none = universal, <device model> = specific device -->
+  <key>thinning</key>
+  <string>&lt;none&gt;</string>
+
+  <!-- Generate a manifest for OTA distribution (optional) -->
+  <key>generateAppStoreInformation</key>
+  <false/>
+</dict>
+</plist>

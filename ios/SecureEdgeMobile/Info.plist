@@ -34,8 +34,14 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSCameraUsageDescription</key>
+	<string>SecureEdge AI requires camera access for biometric face recognition, liveness detection, and anti-spoofing verification.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>SecureEdge AI uses Face ID to authenticate and verify your identity securely.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string></string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>SecureEdge AI may require microphone access for advanced liveness detection features.</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIRequiredDeviceCapabilities</key>

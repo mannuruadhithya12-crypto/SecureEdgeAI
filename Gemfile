@@ -15,3 +15,6 @@ gem 'logger'
 gem 'benchmark'
 gem 'mutex_m'
 gem 'nkf'
+
+# CI/CD build log formatter — makes xcodebuild output human-readable
+gem 'xcpretty'
