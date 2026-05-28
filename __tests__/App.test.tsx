@@ -4,8 +4,13 @@ import { NativeModules } from 'react-native';
 
 // Mock react-native-vision-camera
 jest.mock('react-native-vision-camera', () => {
+  const MockCameraComponent = ({ children }: any) => children;
+  (MockCameraComponent as any).getAvailableCameraDevices = jest.fn(() => [
+    { id: 'front-camera', position: 'front' },
+    { id: 'back-camera', position: 'back' }
+  ]);
   return {
-    Camera: ({ children }: any) => children,
+    Camera: MockCameraComponent,
     useCameraDevice: jest.fn(() => ({ id: 'front-camera', position: 'front' })),
     useCameraFormat: jest.fn(() => ({ maxFps: 30, videoWidth: 1280, videoHeight: 720 })),
     useCameraPermission: jest.fn(() => ({ hasPermission: true, requestPermission: jest.fn(() => Promise.resolve(true)) })),

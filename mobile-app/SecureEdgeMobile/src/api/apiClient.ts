@@ -8,7 +8,7 @@ export interface ApiResponse<T = any> {
   error?: string;
 }
 
-const BACKEND_URL = Platform.OS === 'android' ? 'http://10.0.2.2:5000' : 'http://localhost:5000';
+const BACKEND_URL = Platform.OS === 'android' ? 'http://172.20.10.3:5000' : 'http://localhost:5000';
 const CLIENT_ID = 'secure_edge_mobile_client';
 const CLIENT_SECRET = 'secure_edge_client_secret_xyz';
 const HMAC_SECRET = 'secure_edge_hmac_secret_4567890';
@@ -33,7 +33,7 @@ async function computeHMAC(text: string, key: string): Promise<string> {
  * Enforce HTTPS transport policies (CHANGE-7)
  */
 function validateUrlSecurity(url: string): void {
-  const isDevHost = url.includes('localhost') || url.includes('10.0.2.2') || url.includes('127.0.0.1');
+  const isDevHost = url.includes('localhost') || url.includes('10.0.2.2') || url.includes('127.0.0.1') || url.includes('192.168.') || url.includes('172.');
   if (url.startsWith('http://') && !isDevHost) {
     throw new Error('Transport Security Violation: Unencrypted HTTP connections are blocked.');
   }

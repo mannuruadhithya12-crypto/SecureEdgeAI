@@ -7,6 +7,7 @@ const config = {
     assetExts: Array.from(
       new Set([...defaultConfig.resolver.assetExts, 'tflite']),
     ),
+    blockList: /android\/.*/,
   },
 };
 

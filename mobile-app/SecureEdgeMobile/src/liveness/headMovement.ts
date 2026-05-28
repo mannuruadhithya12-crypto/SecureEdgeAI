@@ -16,10 +16,12 @@ let lastSmoothedY = -999;
 const noseHistoryX: number[] = [];
 const noseHistoryY: number[] = [];
 let lastMovementTime = 0;
+let consecutiveMovementFrames = 0;
+let headLivenessConfidence = 0.0;
 
 /**
  * Detects head movement by monitoring the relative position of the nose tip.
- * Uses a sliding window range check to prevent noise triggers.
+ * Employs movement history buffers, smoothing, and consecutive motion validations.
  */
 export function detectHeadMovement(
   box: NormalizedBox,
@@ -27,7 +29,11 @@ export function detectHeadMovement(
   isEmulator: boolean = false
 ): boolean {
   'worklet';
-  if (keypoints == null || keypoints.length < 3) return false;
+  if (keypoints == null || keypoints.length < 3) {
+    headLivenessConfidence = Math.max(0.0, headLivenessConfidence - 0.05);
+    consecutiveMovementFrames = 0;
+    return false;
+  }
   
   const nose = keypoints[2];
   const boxCenterX = (box.xMin + box.xMax) / 2;
@@ -41,7 +47,7 @@ export function detectHeadMovement(
   const relativeX = (nose.x - boxCenterX) / boxWidth;
   const relativeY = (nose.y - boxCenterY) / boxHeight;
   
-  // 1. EMA Smoothing to filter frame jitter (TASK-3)
+  // 1. EMA Smoothing to filter frame jitter
   const alpha = isEmulator ? 0.35 : 0.50;
   let smoothedX = relativeX;
   let smoothedY = relativeY;
@@ -53,7 +59,7 @@ export function detectHeadMovement(
   lastSmoothedX = smoothedX;
   lastSmoothedY = smoothedY;
   
-  // 2. Add to history queues with strict buffer limit (CHANGE-10: movement history max = 10)
+  // 2. Add to history queues with strict buffer limit
   noseHistoryX.push(smoothedX);
   if (noseHistoryX.length > 10) {
     noseHistoryX.shift();
@@ -85,19 +91,34 @@ export function detectHeadMovement(
   }
   const rangeY = maxY - minY;
   
-  // Adaptive thresholds (CHANGE-12)
+  // Adaptive thresholds based on environment/mode
   const thresholdX = isEmulator ? 0.05 : 0.085;
   const thresholdY = isEmulator ? 0.05 : 0.085;
   
+  const isMoving = rangeX > thresholdX || rangeY > thresholdY;
+  
+  if (isMoving) {
+    consecutiveMovementFrames++;
+  } else {
+    consecutiveMovementFrames = Math.max(0, consecutiveMovementFrames - 1);
+  }
+  
   const now = Date.now();
-  if ((rangeX > thresholdX || rangeY > thresholdY) && (now - lastMovementTime > 1500)) {
+  // 4. Enforce consecutive frames of movement to filter out one-frame jitter spikes
+  if (isMoving && consecutiveMovementFrames >= 3 && (now - lastMovementTime > 1500)) {
     lastMovementTime = now;
-    console.log(`[Liveness] Head movement verified! RangeX: ${rangeX.toFixed(4)}, RangeY: ${rangeY.toFixed(4)}`);
+    headLivenessConfidence = Math.min(1.0, headLivenessConfidence + 0.40);
+    console.log(`[Liveness] Head movement verified! RangeX: ${rangeX.toFixed(4)}, RangeY: ${rangeY.toFixed(4)}, Confidence: ${headLivenessConfidence.toFixed(2)}`);
     console.log('Head movement verified');
     return true;
   }
   
   return false;
+}
+
+export function getHeadMovementConfidence(): number {
+  'worklet';
+  return headLivenessConfidence;
 }
 
 export function resetHeadMovementHistory(): void {
@@ -106,4 +127,6 @@ export function resetHeadMovementHistory(): void {
   lastSmoothedY = -999;
   noseHistoryX.length = 0;
   noseHistoryY.length = 0;
+  consecutiveMovementFrames = 0;
+  headLivenessConfidence = 0.0;
 }

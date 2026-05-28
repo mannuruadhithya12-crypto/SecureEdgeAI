@@ -296,37 +296,35 @@ function generateBlazeFaceAnchors(): Float32Array {
   return anchors;
 }
 
-// Hermes worklets cannot assign to module-scope `let` variables (even = x+1 fails).
-// All mutable worklet state is consolidated into a single const object so that
-// property mutations (ws.x = ...) are used instead of variable reassignment.
-const ws = {
-  frameCounter: 0,
-  cachedBlurPassed: true,
-  warmUpFrames: 0,
-  inferenceFps: 4,
-  latency1: 0,
-  latency2: 0,
-  latency3: 0,
-  latency4: 0,
-  latency5: 0,
-  latencyCount: 0,
-  lastHeavySpoofTime: 0,
-  cachedSpoofResult: false,
-  cachedSpoofConfidence: 0.0,
-  faceStabilityStartTime: 0,
-  lastTrackedNoseX: -999,
-  lastTrackedNoseY: -999,
-  lastFaceDetectedTime: 0,
-  smoothedBoxXMin: -1,
-  smoothedBoxYMin: -1,
-  smoothedBoxXMax: -1,
-  smoothedBoxYMax: -1,
-  smoothedBoxXMinTrend: 0,
-  smoothedBoxYMinTrend: 0,
-  smoothedBoxXMaxTrend: 0,
-  smoothedBoxYMaxTrend: 0,
-};
+let workletFrameCounter = 0;
+let workletCachedBlurPassed = true;
+let workletWarmUpFrames = 0;
+let workletInferenceFps = 4;
+let workletLatency1 = 0;
+let workletLatency2 = 0;
+let workletLatency3 = 0;
+let workletLatency4 = 0;
+let workletLatency5 = 0;
+let workletLatencyCount = 0;
 
+// Member-2 Worklet states (Anti-Spoofing, Face Stability, Smoothing, Tracking Loss)
+let lastHeavySpoofTime = 0;
+let cachedSpoofResult = false;
+let cachedSpoofConfidence = 0.0;
+
+let faceStabilityStartTime = 0;
+let lastTrackedNoseX = -999;
+let lastTrackedNoseY = -999;
+let lastFaceDetectedTime = 0;
+
+let smoothedBoxXMin = -1;
+let smoothedBoxYMin = -1;
+let smoothedBoxXMax = -1;
+let smoothedBoxYMax = -1;
+let smoothedBoxXMinTrend = 0;
+let smoothedBoxYMinTrend = 0;
+let smoothedBoxXMaxTrend = 0;
+let smoothedBoxYMaxTrend = 0;
 
 // Pre-allocated reusable structures for the worklet thread (CHANGE-2 / TASK-5)
 const MAX_DETECTED_FACES = 5;
@@ -617,10 +615,7 @@ function MainApp() {
   
   // Navigation and Slide Router States (CHANGE-1)
   const [currentScreen, setCurrentScreen] = useState<'Onboarding' | 'Verification' | 'Profiles' | 'ProfileDetails' | 'Settings'>('Onboarding');
-  // Default step 0 to avoid premature camera activation during startup.
-  // Step 3 is the face-capture step; it is set explicitly either by the onboarding
-  // flow or when the user taps "Add Profile" from the Verification screen.
-  const [onboardingStep, setOnboardingStep] = useState(0);
+  const [onboardingStep, setOnboardingStep] = useState(3);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
 
   // Settings State and Persistence (CHANGE-5)
@@ -836,7 +831,7 @@ function MainApp() {
       if (value !== 'auto' && (value < 1 || value > 8)) {
         return false;
       }
-      ws.inferenceFps = value === 'auto' ? 4 : value;
+      workletInferenceFps = value === 'auto' ? 4 : value;
     }
     if (key === 'cameraPosition') {
       if (value !== 'front' && value !== 'back') {
@@ -1226,7 +1221,7 @@ function MainApp() {
 
     if (lastArrivalRef.current > 0) {
       const elapsed = now - lastArrivalRef.current;
-      const expectedGap = 1000 / ws.inferenceFps;
+      const expectedGap = 1000 / workletInferenceFps;
       if (elapsed > expectedGap * 1.5) {
         const dropped = Math.round(elapsed / expectedGap) - 1;
         droppedFramesRef.current += dropped;
@@ -1284,12 +1279,7 @@ function MainApp() {
       }
     }
 
-    // During onboarding face registration, there is no activeUser yet.
-    // We still need the frame pipeline to run so latestEmbeddingRef is populated
-    // (enabling the Register button). Skip auth-only guards in this mode.
-    const isOnboardingCapture = currentScreen === 'Onboarding';
-
-    if (activeUser == null && !isOnboardingCapture) {
+    if (activeUser == null) {
       setAuthState('IDLE');
       setStatus('No active profile. Select or register a profile.');
       setDetectedBox(undefined);
@@ -1298,16 +1288,13 @@ function MainApp() {
 
     // Active User Lockout Check (CHANGE-5, CHANGE-9)
     // Relaxed check if Emulator Mode is active to help virtual testing
-    // Skipped during onboarding (activeUser is null, no lockout applicable)
-    if (activeUser != null) {
-      const userLockout = lockoutExpiry[activeUser.name] || 0;
-      if (now < userLockout && !settings.emulatorMode) {
-        const secondsLeft = Math.ceil((userLockout - now) / 1000);
-        setAuthState('REJECTED');
-        setStatus(`ACCESS DENIED: ${activeUser.name} is locked out. Try again in ${secondsLeft}s.`);
-        setDetectedBox(box || undefined);
-        return;
-      }
+    const userLockout = lockoutExpiry[activeUser.name] || 0;
+    if (now < userLockout && !settings.emulatorMode) {
+      const secondsLeft = Math.ceil((userLockout - now) / 1000);
+      setAuthState('REJECTED');
+      setStatus(`ACCESS DENIED: ${activeUser.name} is locked out. Try again in ${secondsLeft}s.`);
+      setDetectedBox(box || undefined);
+      return;
     }
 
     if (stableFaceCount > 1) {
@@ -1362,12 +1349,10 @@ function MainApp() {
       }
       
       const storedCount = Object.keys(storedEmbeddings).length;
-      if (isOnboardingCapture) {
-        setStatus('Align your face inside the guide circle.');
-      } else if (storedCount === 0) {
+      if (storedCount === 0) {
         setStatus('No registered profiles. Please register first.');
       } else {
-        setStatus(`Align face in the guide to authenticate: ${activeUser?.name}`);
+        setStatus(`Align face in the guide to authenticate: ${activeUser.name}`);
       }
       return;
     }
@@ -1415,18 +1400,6 @@ function MainApp() {
 
     latestEmbeddingRef.current = embedding;
 
-    // In onboarding registration mode, we only need the embedding captured.
-    // Skip authentication/liveness logic entirely — just confirm face is ready.
-    if (isOnboardingCapture) {
-      setDetectedBox(box || undefined);
-      setStatus('Face captured! Enter your name above and tap Register.');
-      return;
-    }
-
-    // After this point: not in onboarding mode.
-    // TypeScript cannot infer activeUser != null from the isOnboardingCapture guard above,
-    // so we add this explicit check. At runtime it is unreachable.
-    if (activeUser == null) return;
     let blinkDetected = livenessBlink;
     if (!blinkDetected) {
       blinkDetected = detectBlink(blazePixels, keypoints, activeEmulator);
@@ -1623,12 +1596,13 @@ function MainApp() {
     }
 
     // Zero out local embedding and clean up references (CHANGE-11)
-    // (Onboarding path already returned early above; cleanup always runs here)
-    if (latestEmbeddingRef.current) {
-      latestEmbeddingRef.current.fill(0);
-      latestEmbeddingRef.current = null;
+    if (currentScreen !== 'Onboarding') {
+      if (latestEmbeddingRef.current) {
+        latestEmbeddingRef.current.fill(0);
+        latestEmbeddingRef.current = null;
+      }
+      embedding.fill(0);
     }
-    embedding.fill(0);
   }, [storedEmbeddings, rollingScores, livenessBlink, livenessHead, activeUser, failedAttempts, lockoutExpiry, sessionActive, authenticatedUser, activeEmulator, currentScreen]);
 
 
@@ -1801,8 +1775,8 @@ function MainApp() {
   const frameProcessor = useFrameProcessor(
     frame => {
       'worklet';
-      if (ws.warmUpFrames < 4) {
-        ws.warmUpFrames = ws.warmUpFrames + 1;
+      if (workletWarmUpFrames < 4) {
+        workletWarmUpFrames++;
         return;
       }
       const blazeBox = boxedBlaze.value;
@@ -1818,7 +1792,7 @@ function MainApp() {
         return;
       }
  
-      runAtTargetFps(ws.inferenceFps, () => {
+      runAtTargetFps(workletInferenceFps, () => {
         'worklet';
         if (!frame.isValid) {
           return;
@@ -1898,33 +1872,33 @@ function MainApp() {
           const smoothAlpha = 0.45;
           const smoothBeta = 0.25;
           
-          if (ws.smoothedBoxXMin < 0) {
-            ws.smoothedBoxXMin = rawBoxRaw.xMin;
-            ws.smoothedBoxYMin = rawBoxRaw.yMin;
-            ws.smoothedBoxXMax = rawBoxRaw.xMax;
-            ws.smoothedBoxYMax = rawBoxRaw.yMax;
+          if (smoothedBoxXMin < 0) {
+            smoothedBoxXMin = rawBoxRaw.xMin;
+            smoothedBoxYMin = rawBoxRaw.yMin;
+            smoothedBoxXMax = rawBoxRaw.xMax;
+            smoothedBoxYMax = rawBoxRaw.yMax;
           } else {
-            const lastXMin = ws.smoothedBoxXMin;
-            const lastYMin = ws.smoothedBoxYMin;
-            const lastXMax = ws.smoothedBoxXMax;
-            const lastYMax = ws.smoothedBoxYMax;
+            const lastXMin = smoothedBoxXMin;
+            const lastYMin = smoothedBoxYMin;
+            const lastXMax = smoothedBoxXMax;
+            const lastYMax = smoothedBoxYMax;
             
-            ws.smoothedBoxXMin = smoothAlpha * rawBoxRaw.xMin + (1 - smoothAlpha) * (ws.smoothedBoxXMin + ws.smoothedBoxXMinTrend);
-            ws.smoothedBoxYMin = smoothAlpha * rawBoxRaw.yMin + (1 - smoothAlpha) * (ws.smoothedBoxYMin + ws.smoothedBoxYMinTrend);
-            ws.smoothedBoxXMax = smoothAlpha * rawBoxRaw.xMax + (1 - smoothAlpha) * (ws.smoothedBoxXMax + ws.smoothedBoxXMaxTrend);
-            ws.smoothedBoxYMax = smoothAlpha * rawBoxRaw.yMax + (1 - smoothAlpha) * (ws.smoothedBoxYMax + ws.smoothedBoxYMaxTrend);
+            smoothedBoxXMin = smoothAlpha * rawBoxRaw.xMin + (1 - smoothAlpha) * (smoothedBoxXMin + smoothedBoxXMinTrend);
+            smoothedBoxYMin = smoothAlpha * rawBoxRaw.yMin + (1 - smoothAlpha) * (smoothedBoxYMin + smoothedBoxYMinTrend);
+            smoothedBoxXMax = smoothAlpha * rawBoxRaw.xMax + (1 - smoothAlpha) * (smoothedBoxXMax + smoothedBoxXMaxTrend);
+            smoothedBoxYMax = smoothAlpha * rawBoxRaw.yMax + (1 - smoothAlpha) * (smoothedBoxYMax + smoothedBoxYMaxTrend);
             
-            ws.smoothedBoxXMinTrend = smoothBeta * (ws.smoothedBoxXMin - lastXMin) + (1 - smoothBeta) * ws.smoothedBoxXMinTrend;
-            ws.smoothedBoxYMinTrend = smoothBeta * (ws.smoothedBoxYMin - lastYMin) + (1 - smoothBeta) * ws.smoothedBoxYMinTrend;
-            ws.smoothedBoxXMaxTrend = smoothBeta * (ws.smoothedBoxXMax - lastXMax) + (1 - smoothBeta) * ws.smoothedBoxXMaxTrend;
-            ws.smoothedBoxYMaxTrend = smoothBeta * (ws.smoothedBoxYMax - lastYMax) + (1 - smoothBeta) * ws.smoothedBoxYMaxTrend;
+            smoothedBoxXMinTrend = smoothBeta * (smoothedBoxXMin - lastXMin) + (1 - smoothBeta) * smoothedBoxXMinTrend;
+            smoothedBoxYMinTrend = smoothBeta * (smoothedBoxYMin - lastYMin) + (1 - smoothBeta) * smoothedBoxYMinTrend;
+            smoothedBoxXMaxTrend = smoothBeta * (smoothedBoxXMax - lastXMax) + (1 - smoothBeta) * smoothedBoxXMaxTrend;
+            smoothedBoxYMaxTrend = smoothBeta * (smoothedBoxYMax - lastYMax) + (1 - smoothBeta) * smoothedBoxYMaxTrend;
           }
           
           const bestBox = {
-            xMin: ws.smoothedBoxXMin,
-            yMin: ws.smoothedBoxYMin,
-            xMax: ws.smoothedBoxXMax,
-            yMax: ws.smoothedBoxYMax,
+            xMin: smoothedBoxXMin,
+            yMin: smoothedBoxYMin,
+            xMax: smoothedBoxXMax,
+            yMax: smoothedBoxYMax,
           };
           
           const bestKeypoints = [
@@ -1940,9 +1914,9 @@ function MainApp() {
           
           // Tracking stability & loss recovery timer logic (CHANGE-5, CHANGE-6)
           let isSameFace = false;
-          if (ws.lastTrackedNoseX > -900 && ws.lastTrackedNoseY > -900) {
-            const dx = bestKeypoints[2].x - ws.lastTrackedNoseX;
-            const dy = bestKeypoints[2].y - ws.lastTrackedNoseY;
+          if (lastTrackedNoseX > -900 && lastTrackedNoseY > -900) {
+            const dx = bestKeypoints[2].x - lastTrackedNoseX;
+            const dy = bestKeypoints[2].y - lastTrackedNoseY;
             const dist = Math.sqrt(dx * dx + dy * dy);
             if (dist < 0.15) {
               isSameFace = true;
@@ -1950,34 +1924,34 @@ function MainApp() {
           }
           
           if (!isSameFace) {
-            ws.faceStabilityStartTime = nowMs;
-            ws.lastTrackedNoseX = bestKeypoints[2].x;
-            ws.lastTrackedNoseY = bestKeypoints[2].y;
+            faceStabilityStartTime = nowMs;
+            lastTrackedNoseX = bestKeypoints[2].x;
+            lastTrackedNoseY = bestKeypoints[2].y;
           }
-          ws.lastFaceDetectedTime = nowMs;
+          lastFaceDetectedTime = nowMs;
 
-          const faceStableDuration = nowMs - ws.faceStabilityStartTime;
+          const faceStableDuration = nowMs - faceStabilityStartTime;
           const isFaceStable = faceStableDuration >= 1200; // Require 1.2s persistence (Change-5)
 
           // Thermal Protection check (CHANGE-7)
           let skipHeavyChecksDueToThermal = false;
-          if (ws.latencyCount >= 5) {
-            const avg = (ws.latency1 + ws.latency2 + ws.latency3 + ws.latency4 + ws.latency5) / 5;
+          if (workletLatencyCount >= 5) {
+            const avg = (workletLatency1 + workletLatency2 + workletLatency3 + workletLatency4 + workletLatency5) / 5;
             if (avg > 350) {
-              ws.inferenceFps = 1;
+              workletInferenceFps = 1;
               skipHeavyChecksDueToThermal = true;
             } else if (avg > 220) {
-              ws.inferenceFps = 2;
+              workletInferenceFps = 2;
               skipHeavyChecksDueToThermal = true;
             } else {
-              ws.inferenceFps = 4;
+              workletInferenceFps = 4;
             }
           }
 
           // Throttled Heavy Spoof analysis (CHANGE-1)
-          const runHeavySpoof = (nowMs - ws.lastHeavySpoofTime > 750) && !skipHeavyChecksDueToThermal;
+          const runHeavySpoof = (nowMs - lastHeavySpoofTime > 750) && !skipHeavyChecksDueToThermal;
           if (runHeavySpoof) {
-            ws.lastHeavySpoofTime = nowMs;
+            lastHeavySpoofTime = nowMs;
             const spoofRes = verifyAntiSpoofing(
               blazePixels as Float32Array,
               blazeInput.width,
@@ -1986,11 +1960,11 @@ function MainApp() {
               bestKeypoints,
               activeEmulator
             );
-            ws.cachedSpoofResult = spoofRes.spoofDetected;
-            ws.cachedSpoofConfidence = spoofRes.spoofConfidence;
+            cachedSpoofResult = spoofRes.spoofDetected;
+            cachedSpoofConfidence = spoofRes.spoofConfidence;
           }
 
-          const spoofDetected = ws.cachedSpoofResult;
+          const spoofDetected = cachedSpoofResult;
 
           // 1. Run face-quality validation BEFORE MobileFaceNet embedding extraction (CHANGE-2)
           const quality = validateFaceQuality(
@@ -2019,7 +1993,7 @@ function MainApp() {
           
           if (qualityError != null) {
             const latency = performance.now() - startTime;
-            handleFrameResult(bestBox, bestKeypoints, blazePixels as Float32Array, null, qualityError, validFaceCount, latency, spoofDetected, ws.cachedSpoofConfidence);
+            handleFrameResult(bestBox, bestKeypoints, blazePixels as Float32Array, null, qualityError, validFaceCount, latency, spoofDetected, cachedSpoofConfidence);
             return;
           }
           
@@ -2048,39 +2022,39 @@ function MainApp() {
           } catch (tfliteErr) {
             console.log('TFLite inference error: ' + String(tfliteErr));
             const latency = performance.now() - startTime;
-            handleFrameResult(bestBox, bestKeypoints, blazePixels as Float32Array, null, null, validFaceCount, latency, spoofDetected, ws.cachedSpoofConfidence);
+            handleFrameResult(bestBox, bestKeypoints, blazePixels as Float32Array, null, null, validFaceCount, latency, spoofDetected, cachedSpoofConfidence);
             return;
           }
           
           if (embeddingOutputs.length === 0 || embeddingOutputs[0].byteLength % 4 !== 0) {
             const latency = performance.now() - startTime;
-            handleFrameResult(bestBox, bestKeypoints, blazePixels as Float32Array, null, null, validFaceCount, latency, spoofDetected, ws.cachedSpoofConfidence);
+            handleFrameResult(bestBox, bestKeypoints, blazePixels as Float32Array, null, null, validFaceCount, latency, spoofDetected, cachedSpoofConfidence);
             return;
           }
  
           const embedding = new Float32Array(embeddingOutputs[0]);
           const latency = performance.now() - startTime;
           
-          ws.latency5 = ws.latency4;
-          ws.latency4 = ws.latency3;
-          ws.latency3 = ws.latency2;
-          ws.latency2 = ws.latency1;
-          ws.latency1 = latency;
-          if (ws.latencyCount < 5) {
-            ws.latencyCount = ws.latencyCount + 1;
+          workletLatency5 = workletLatency4;
+          workletLatency4 = workletLatency3;
+          workletLatency3 = workletLatency2;
+          workletLatency2 = workletLatency1;
+          workletLatency1 = latency;
+          if (workletLatencyCount < 5) {
+            workletLatencyCount++;
           }
-          if (ws.latencyCount >= 5) {
-            const avg = (ws.latency1 + ws.latency2 + ws.latency3 + ws.latency4 + ws.latency5) / 5;
+          if (workletLatencyCount >= 5) {
+            const avg = (workletLatency1 + workletLatency2 + workletLatency3 + workletLatency4 + workletLatency5) / 5;
             if (avg > 250) {
-              ws.inferenceFps = 2;
+              workletInferenceFps = 2;
             } else if (avg > 450) {
-              ws.inferenceFps = 1;
+              workletInferenceFps = 1;
             } else if (avg < 140) {
-              ws.inferenceFps = 4;
+              workletInferenceFps = 4;
             }
           }
           
-          handleFrameResult(bestBox, bestKeypoints, blazePixels as Float32Array, embedding, null, validFaceCount, latency, spoofDetected, ws.cachedSpoofConfidence);
+          handleFrameResult(bestBox, bestKeypoints, blazePixels as Float32Array, embedding, null, validFaceCount, latency, spoofDetected, cachedSpoofConfidence);
         } catch (error) {
           console.log('Frame processor error: ' + String(error));
           reportRuntimeError(String(error));

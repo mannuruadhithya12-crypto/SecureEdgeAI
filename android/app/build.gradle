@@ -105,6 +105,11 @@ android {
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
         }
     }
+    packagingOptions {
+        pickFirst "**/libsqlite3.so"
+        pickFirst "**/libcrypto.so"
+        pickFirst "**/libssl.so"
+    }
 }
 
 dependencies {
