@@ -1,0 +1,25 @@
+{
+  "spoof_checklist": [
+    {
+      "threat_id": "SP-001",
+      "attack_type": "Printed Photo Presentation",
+      "medium": "A4 Paper / Color Laser Print",
+      "mitigation": "Micro-texture moiré filter detection & flatness checking",
+      "verification_method": "Hold high-resolution photo in front of the lens. Verify liveness confidence remains < 0.50 and authorization is blocked."
+    },
+    {
+      "threat_id": "SP-002",
+      "attack_type": "Digital Screen Replay",
+      "medium": "Smartphone / Tablet LCD Screen",
+      "mitigation": "Blink detection tracking & screen grid pattern noise analysis",
+      "verification_method": "Replay a video recording of the user's face on another phone in front of the camera. Verify blink checking alerts active status and rejects authorization."
+    },
+    {
+      "threat_id": "SP-003",
+      "attack_type": "Static Face Mask",
+      "medium": "3D Molded Mask / Cut-out Eye Holes",
+      "mitigation": "Depth consistency maps & structural alignment offsets",
+      "verification_method": "Present a textured static mask. Verify liveness model detects structural rigidity and rejects matching."
+    }
+  ]
+}
