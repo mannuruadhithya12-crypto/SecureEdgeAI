@@ -98,6 +98,7 @@ const BLAZEFACE_FRONT_MODEL = require('./src/assets/models/blazeface_front.tflit
 const BLAZEFACE_BACK_MODEL = require('./src/assets/models/blazeface_back.tflite');
 const MOBILEFACENET_MODEL = require('./src/assets/models/mobilefacenet.tflite');
 
+const ENABLE_GPU_DELEGATE = __DEV__;
 const CPU_DELEGATES: TensorflowModelDelegate[] = [];
 const FACE_SCORE_THRESHOLD = 0.45;
 /** RGB avoids corrupt YUV preview on many Android emulators; matches frame-processor resize. */
@@ -559,11 +560,13 @@ function useResilientTensorflowModel(source: any, label: string) {
   useEffect(() => {
     let active = true;
     const load = async () => {
-      // Fallback chain: GPU -> NNAPI -> CPU ([])
+      // Release avoids GPU delegate binaries/thermal risk; debug keeps GPU as a last diagnostic fallback.
       const fallbackChain: { name: string; delegate: TensorflowModelDelegate[] }[] = [
-        { name: 'GPU', delegate: ['android-gpu'] },
         { name: 'NNAPI', delegate: ['nnapi'] },
-        { name: 'CPU', delegate: [] }
+        { name: 'CPU', delegate: CPU_DELEGATES },
+        ...(ENABLE_GPU_DELEGATE
+          ? [{ name: 'GPU', delegate: ['android-gpu'] as TensorflowModelDelegate[] }]
+          : [])
       ];
 
       for (const step of fallbackChain) {
