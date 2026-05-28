@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { StyleSheet, Text, View, TouchableOpacity, ActivityIndicator, Image, SafeAreaView } from 'react-native';
-import { Camera, useCameraDevice, usePhotoOutput, CameraRef } from 'react-native-vision-camera';
+import { Camera, useCameraDevice } from 'react-native-vision-camera';
 import { useIsFocused } from '@react-navigation/native';
 import { requestPermission, captureImage } from '../services/cameraService';
 
@@ -9,9 +9,8 @@ export default function CameraScreen({ navigation, route }: any) {
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
   const [isCapturing, setIsCapturing] = useState<boolean>(false);
-  const cameraRef = useRef<CameraRef>(null);
+  const cameraRef = useRef<Camera>(null);
   const device = useCameraDevice(cameraPosition);
-  const photoOutput = usePhotoOutput();
   const isFocused = useIsFocused();
 
   useEffect(() => {
@@ -30,7 +29,7 @@ export default function CameraScreen({ navigation, route }: any) {
     if (isCapturing) return;
     setIsCapturing(true);
     try {
-      const imageUri = await captureImage(photoOutput);
+      const imageUri = await captureImage(cameraRef);
       setCapturedImage(imageUri);
     } catch (error) {
       console.error('[CameraScreen] Capture failed:', error);
@@ -118,11 +117,8 @@ export default function CameraScreen({ navigation, route }: any) {
             ]}
             device={device}
             isActive={isFocused && !capturedImage}
-            outputs={[photoOutput]}
-            enableNativeZoomGesture={true}
-            implementationMode="performance"
+            enableZoomGesture={true}
             resizeMode="cover"
-            mirrorMode="off"
             onError={(error) => {
               console.warn('[CameraScreen] Camera session error/interruption:', error);
             }}

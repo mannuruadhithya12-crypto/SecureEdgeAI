@@ -1,9 +1,9 @@
-import { VisionCamera, PhotoFile, CameraPhotoOutput } from 'react-native-vision-camera';
+import { Camera, PhotoFile } from 'react-native-vision-camera';
 
 export async function requestPermission(): Promise<boolean> {
   try {
-    const granted = await VisionCamera.requestCameraPermission();
-    return granted;
+    const status = await Camera.requestCameraPermission();
+    return status === 'granted';
   } catch (error) {
     console.error(
       '[CameraService] Permission request failed:',
@@ -21,19 +21,18 @@ export function startPreview(): boolean {
 }
 
 export async function captureImage(
-  photoOutput: CameraPhotoOutput
+  cameraRef: React.RefObject<any>
 ): Promise<string> {
-  if (!photoOutput) {
+  if (!cameraRef.current) {
     throw new Error(
-      'Photo output is not initialized'
+      'Camera ref is not initialized'
     );
   }
 
-  const photo: PhotoFile =
-    await photoOutput.capturePhotoToFile({
-      flashMode: 'off',
-      enableShutterSound: false,
-    }, {});
+  const photo: PhotoFile = await cameraRef.current.takePhoto({
+    flash: 'off',
+    enableShutterSound: false,
+  });
 
-  return `file://${photo.filePath}`;
+  return `file://${photo.path}`;
 }

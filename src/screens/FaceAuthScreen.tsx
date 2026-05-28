@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { StyleSheet, View, Text, TouchableOpacity, ActivityIndicator, SafeAreaView } from 'react-native';
-import { Camera, useCameraDevice, usePhotoOutput, CameraRef } from 'react-native-vision-camera';
+import { Camera, useCameraDevice } from 'react-native-vision-camera';
 import { useIsFocused } from '@react-navigation/native';
 import { requestPermission, captureImage } from '../services/cameraService';
 import { authenticateUser } from '../services/authenticateUser';
@@ -27,9 +27,8 @@ export default function FaceAuthScreen({ route, navigation }: any) {
   const [verifiedName, setVerifiedName] = useState<string | undefined>(undefined);
 
   const isFocused = useIsFocused();
-  const cameraRef = useRef<CameraRef>(null);
+  const cameraRef = useRef<Camera>(null);
   const device = useCameraDevice(cameraPosition);
-  const photoOutput = usePhotoOutput();
 
   const showOverlay = authState === 'success' || authState === 'failed';
   const isCameraActive = isFocused && !showOverlay;
@@ -74,7 +73,7 @@ export default function FaceAuthScreen({ route, navigation }: any) {
     try {
       // 1. Capture the image frame
       const captureStart = Date.now();
-      const imageUri = await captureImage(photoOutput);
+      const imageUri = await captureImage(cameraRef);
       const captureDuration = Date.now() - captureStart;
       perfMetrics.captureLatencyMs = captureDuration;
       console.log(`🛡️ [QA-Perf] [Capture] Frame captured in ${captureDuration}ms. Path: ${imageUri}`);
@@ -195,11 +194,8 @@ export default function FaceAuthScreen({ route, navigation }: any) {
           ]}
           device={device}
           isActive={isCameraActive}
-          outputs={[photoOutput]}
-          enableNativeZoomGesture={true}
-          implementationMode="performance"
+          enableZoomGesture={true}
           resizeMode="cover"
-          mirrorMode="off"
           onStarted={() => {
             console.log('[FaceAuthScreen] Camera session started lifecycle callback.');
           }}

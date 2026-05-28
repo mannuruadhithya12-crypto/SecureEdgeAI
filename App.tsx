@@ -118,14 +118,6 @@ function isAndroidEmulator(): boolean {
   );
 }
 
-export default function App() {
-  return (
-    <SafeAreaProvider>
-      <MainApp />
-    </SafeAreaProvider>
-  );
-}
-
 type InputSpec = {
   width: number;
   height: number;

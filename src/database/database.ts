@@ -18,7 +18,7 @@ const getDatabasePath = (): string => {
   }
 };
 
-let dbInstance: SQLite.SQLiteDatabase | null = null;
+let dbInstance: any = null;
 let isDbEncrypted = false;
 
 // Fallback in-memory storage if SQLite fails to initialize at runtime in Fabric
@@ -32,7 +32,7 @@ export interface User {
   created_at?: string;
 }
 
-export async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
+export async function getDatabase(): Promise<any> {
   if (dbInstance) {
     return dbInstance;
   }
@@ -109,7 +109,7 @@ export async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
   return dbInstance!;
 }
 
-async function openCipherDatabase(key: string): Promise<SQLite.SQLiteDatabase> {
+async function openCipherDatabase(key: string): Promise<any> {
   return await SQLite.openDatabase({
     name: DATABASE_NAME,
     location: 'default',
@@ -117,7 +117,7 @@ async function openCipherDatabase(key: string): Promise<SQLite.SQLiteDatabase> {
   });
 }
 
-async function openUnencryptedDatabase(): Promise<SQLite.SQLiteDatabase> {
+async function openUnencryptedDatabase(): Promise<any> {
   return await SQLite.openDatabase({
     name: DATABASE_NAME,
     location: 'default'
@@ -127,7 +127,7 @@ async function openUnencryptedDatabase(): Promise<SQLite.SQLiteDatabase> {
 /**
  * Executes a SQLite integrity check (CHANGE-4)
  */
-async function runIntegrityCheck(db: SQLite.SQLiteDatabase): Promise<boolean> {
+async function runIntegrityCheck(db: any): Promise<boolean> {
   try {
     const result = await db.executeSql('PRAGMA integrity_check;');
     if (result && result.length > 0 && result[0].rows && result[0].rows.length > 0) {
@@ -266,7 +266,7 @@ async function runSqlCipherMigration(dbPath: string, dbKey: string): Promise<voi
 /**
  * SQLCipher Performance Benchmarking (CHANGE-13)
  */
-async function benchmarkDatabase(db: SQLite.SQLiteDatabase): Promise<void> {
+async function benchmarkDatabase(db: any): Promise<void> {
   try {
     const startWrite = Date.now();
     // Perform a test insert
@@ -293,7 +293,7 @@ async function benchmarkDatabase(db: SQLite.SQLiteDatabase): Promise<void> {
 /**
  * Database schema migration helper
  */
-async function runMigrations(db: SQLite.SQLiteDatabase): Promise<void> {
+async function runMigrations(db: any): Promise<void> {
   try {
     const result = await db.executeSql('PRAGMA user_version;');
     let currentVersion = 0;
