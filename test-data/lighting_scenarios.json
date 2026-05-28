@@ -1,0 +1,28 @@
+{
+  "scenarios": [
+    {
+      "name": "Standard Indoor Office Light",
+      "lux_range": "300 - 500",
+      "guideline": "Recommended. Position subject directly facing the terminal camera with even overhead lighting.",
+      "camera_exposure_bias": 0.0
+    },
+    {
+      "name": "Low-Light / Dim Environment",
+      "lux_range": "< 50",
+      "guideline": "Toggle Low-Light Boost. The screen brightness will automatically pulse white to act as a fill light during enrollment.",
+      "camera_exposure_bias": 0.75
+    },
+    {
+      "name": "Severe Backlighting",
+      "lux_range": "> 2000 (Behind subject)",
+      "guideline": "Avoid strong light sources directly behind the user. Re-orient the device angle to prevent face washouts.",
+      "camera_exposure_bias": -0.5
+    },
+    {
+      "name": "Side Angle / Ambient Shadowing",
+      "lux_range": "100 - 300",
+      "guideline": "Avoid heavy shadows on half of the face. Ask user to rotate towards the light source to ensure symmetrical features.",
+      "camera_exposure_bias": 0.25
+    }
+  ]
+}

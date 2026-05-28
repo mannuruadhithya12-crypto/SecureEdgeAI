@@ -1,0 +1,38 @@
+[
+  {
+    "scenario_id": "SC-001",
+    "name": "Biometric Verification Success",
+    "employee_id": "EMP001",
+    "liveness": 0.985,
+    "input_vector": "manoj_embedding",
+    "expected_decision": "valid",
+    "expected_similarity_min": 0.95
+  },
+  {
+    "scenario_id": "SC-002",
+    "name": "Biometric Verification Reject",
+    "employee_id": "EMP001",
+    "liveness": 0.991,
+    "input_vector": "intruder_embedding",
+    "expected_decision": "reject",
+    "expected_similarity_max": 0.35
+  },
+  {
+    "scenario_id": "SC-003",
+    "name": "Spoof Presentation Detection (Reject)",
+    "employee_id": "EMP001",
+    "liveness": 0.312,
+    "input_vector": "manoj_embedding",
+    "expected_decision": "reject",
+    "reason": "Liveness score falls below anti-spoof threshold of 0.85"
+  },
+  {
+    "scenario_id": "SC-004",
+    "name": "Unregistered ID Check",
+    "employee_id": "EMP-UNKNOWN",
+    "liveness": 0.95,
+    "input_vector": "manoj_embedding",
+    "expected_decision": "reject",
+    "expected_error": "Employee ID \"EMP-UNKNOWN\" not found on this device"
+  }
+]

@@ -1,7 +1,3 @@
-/**
- * @format
- */
-
 import React from 'react';
 import ReactTestRenderer from 'react-test-renderer';
 import { NativeModules } from 'react-native';
@@ -146,6 +142,8 @@ jest.mock('@react-native-community/netinfo', () => ({
 
 import App from '../App';
 
+jest.useFakeTimers();
+
 test('renders correctly', async () => {
   let renderer: any;
   await ReactTestRenderer.act(() => {
@@ -153,5 +151,10 @@ test('renders correctly', async () => {
   });
   await ReactTestRenderer.act(() => {
     renderer.unmount();
+  });
+  
+  // Fast-forward and exhaust all splash screen timeouts inside act()
+  await ReactTestRenderer.act(async () => {
+    jest.runAllTimers();
   });
 });
