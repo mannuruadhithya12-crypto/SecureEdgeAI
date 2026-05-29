@@ -147,7 +147,7 @@ async function runIntegrityCheck(db: any): Promise<boolean> {
       if (row == null) {
         return false;
       }
-      const status = Object.values(row)[0];
+      const status = row.integrity_check !== undefined ? row.integrity_check : Object.values(row)[0];
       return status === 'ok';
     }
   } catch (e) {
@@ -315,7 +315,7 @@ async function runMigrations(db: any): Promise<void> {
     if (result && result.length > 0 && result[0].rows && result[0].rows.length > 0) {
       const item = result[0].rows.item(0);
       if (item != null) {
-        currentVersion = Number(Object.values(item)[0]) || 0;
+        currentVersion = Number(item.user_version !== undefined ? item.user_version : Object.values(item)[0]) || 0;
       }
     }
 

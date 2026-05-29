@@ -56,8 +56,11 @@ export async function getSecurityAnalytics(): Promise<SecurityAnalytics> {
     // 2. Fetch sync failures count from sync_queue
     let syncFailures = 0;
     const queueResult = await db.executeSql("SELECT COUNT(*) as count FROM sync_queue WHERE status = 'FAILED';");
-    if (queueResult && queueResult.length > 0 && queueResult[0].rows.length > 0) {
-      syncFailures = Number(Object.values(queueResult[0].rows.item(0))[0]) || 0;
+    if (queueResult && queueResult.length > 0 && queueResult[0].rows && queueResult[0].rows.length > 0) {
+      const row = queueResult[0].rows.item(0);
+      if (row != null) {
+        syncFailures = Number(row.count !== undefined ? row.count : Object.values(row)[0]) || 0;
+      }
     }
 
     const totalAuth = successCount + failureCount;
