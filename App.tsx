@@ -550,6 +550,8 @@ function faceCropForFrame(frameWidth: number, frameHeight: number, box?: Normali
 
 
 
+const ENABLE_GPU_DELEGATE = __DEV__;
+
 function useResilientTensorflowModel(source: any, label: string) {
   const [state, setState] = useState<any>({
     model: undefined,
@@ -559,12 +561,16 @@ function useResilientTensorflowModel(source: any, label: string) {
   useEffect(() => {
     let active = true;
     const load = async () => {
-      // Fallback chain: GPU -> NNAPI -> CPU ([])
-      const fallbackChain: { name: string; delegate: TensorflowModelDelegate[] }[] = [
-        { name: 'GPU', delegate: ['android-gpu'] },
-        { name: 'NNAPI', delegate: ['nnapi'] },
-        { name: 'CPU', delegate: [] }
-      ];
+      const fallbackChain: { name: string; delegate: TensorflowModelDelegate[] }[] = ENABLE_GPU_DELEGATE
+        ? [
+            { name: 'GPU', delegate: ['android-gpu'] },
+            { name: 'NNAPI', delegate: ['nnapi'] },
+            { name: 'CPU', delegate: [] }
+          ]
+        : [
+            { name: 'NNAPI', delegate: ['nnapi'] },
+            { name: 'CPU', delegate: [] }
+          ];
 
       for (const step of fallbackChain) {
         if (!active) return;
