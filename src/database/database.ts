@@ -68,6 +68,14 @@ export async function getDatabase(): Promise<any> {
     } catch (e) {
       // Opening with SQLCipher failed. This means the DB file is unencrypted, or key is wrong.
       console.log('[Database] Failed to open as encrypted. Checking for unencrypted database migration...');
+      if (dbInstance) {
+        try {
+          await dbInstance.close();
+        } catch (closeErr) {
+          // ignore
+        }
+        dbInstance = null;
+      }
       try {
         // Try opening as unencrypted
         dbInstance = await openUnencryptedDatabase();
@@ -81,6 +89,10 @@ export async function getDatabase(): Promise<any> {
       } catch (migrationErr) {
         console.error('[Database] SQLCipher migration failed, falling back to unencrypted database:', migrationErr);
         // Fallback: Open unencrypted to preserve user data (CHANGE-16)
+        if (dbInstance) {
+          try { await dbInstance.close(); } catch(e){}
+          dbInstance = null;
+        }
         dbInstance = await openUnencryptedDatabase();
         isDbEncrypted = false;
       }
@@ -132,6 +144,9 @@ async function runIntegrityCheck(db: any): Promise<boolean> {
     const result = await db.executeSql('PRAGMA integrity_check;');
     if (result && result.length > 0 && result[0].rows && result[0].rows.length > 0) {
       const row = result[0].rows.item(0);
+      if (row == null) {
+        return false;
+      }
       const status = Object.values(row)[0];
       return status === 'ok';
     }
@@ -299,7 +314,9 @@ async function runMigrations(db: any): Promise<void> {
     let currentVersion = 0;
     if (result && result.length > 0 && result[0].rows && result[0].rows.length > 0) {
       const item = result[0].rows.item(0);
-      currentVersion = Number(Object.values(item)[0]) || 0;
+      if (item != null) {
+        currentVersion = Number(Object.values(item)[0]) || 0;
+      }
     }
 
     console.log(`[Database] Current database schema version: ${currentVersion}`);
