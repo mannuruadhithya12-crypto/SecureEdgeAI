@@ -147,7 +147,12 @@ async function runIntegrityCheck(db: any): Promise<boolean> {
       if (row == null) {
         return false;
       }
-      const status = row.integrity_check !== undefined ? row.integrity_check : Object.values(row)[0];
+      let status = '';
+      if (row.integrity_check !== undefined) {
+        status = row.integrity_check;
+      } else if (row['integrity_check'] !== undefined) {
+        status = row['integrity_check'];
+      }
       return status === 'ok';
     }
   } catch (e) {
@@ -315,7 +320,11 @@ async function runMigrations(db: any): Promise<void> {
     if (result && result.length > 0 && result[0].rows && result[0].rows.length > 0) {
       const item = result[0].rows.item(0);
       if (item != null) {
-        currentVersion = Number(item.user_version !== undefined ? item.user_version : Object.values(item)[0]) || 0;
+        if (item.user_version !== undefined) {
+          currentVersion = Number(item.user_version) || 0;
+        } else if (item['user_version'] !== undefined) {
+          currentVersion = Number(item['user_version']) || 0;
+        }
       }
     }
 

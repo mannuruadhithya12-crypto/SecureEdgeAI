@@ -59,7 +59,11 @@ export async function getSecurityAnalytics(): Promise<SecurityAnalytics> {
     if (queueResult && queueResult.length > 0 && queueResult[0].rows && queueResult[0].rows.length > 0) {
       const row = queueResult[0].rows.item(0);
       if (row != null) {
-        syncFailures = Number(row.count !== undefined ? row.count : Object.values(row)[0]) || 0;
+        if (row.count !== undefined) {
+          syncFailures = Number(row.count) || 0;
+        } else if (row['count'] !== undefined) {
+          syncFailures = Number(row['count']) || 0;
+        }
       }
     }
 
