@@ -4,6 +4,8 @@ module.exports = {
       platforms: {
         android: {
           sourceDir: '../node_modules/react-native-sqlcipher-storage/src/android',
+          packageImportPath: 'import org.pgsqlite.SQLitePluginPackage;',
+          packageInstance: 'new SQLitePluginPackage()',
         },
       },
     },
