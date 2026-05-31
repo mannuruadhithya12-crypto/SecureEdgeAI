@@ -296,35 +296,37 @@ function generateBlazeFaceAnchors(): Float32Array {
   return anchors;
 }
 
-let workletFrameCounter = 0;
-let workletCachedBlurPassed = true;
-let workletWarmUpFrames = 0;
-let workletInferenceFps = 4;
-let workletLatency1 = 0;
-let workletLatency2 = 0;
-let workletLatency3 = 0;
-let workletLatency4 = 0;
-let workletLatency5 = 0;
-let workletLatencyCount = 0;
+const workletState = {
+  frameCounter: 0,
+  cachedBlurPassed: true,
+  warmUpFrames: 0,
+  inferenceFps: 4,
+  latency1: 0,
+  latency2: 0,
+  latency3: 0,
+  latency4: 0,
+  latency5: 0,
+  latencyCount: 0,
 
-// Member-2 Worklet states (Anti-Spoofing, Face Stability, Smoothing, Tracking Loss)
-let lastHeavySpoofTime = 0;
-let cachedSpoofResult = false;
-let cachedSpoofConfidence = 0.0;
+  // Member-2 Worklet states (Anti-Spoofing, Face Stability, Smoothing, Tracking Loss)
+  lastHeavySpoofTime: 0,
+  cachedSpoofResult: false,
+  cachedSpoofConfidence: 0.0,
 
-let faceStabilityStartTime = 0;
-let lastTrackedNoseX = -999;
-let lastTrackedNoseY = -999;
-let lastFaceDetectedTime = 0;
+  faceStabilityStartTime: 0,
+  lastTrackedNoseX: -999,
+  lastTrackedNoseY: -999,
+  lastFaceDetectedTime: 0,
 
-let smoothedBoxXMin = -1;
-let smoothedBoxYMin = -1;
-let smoothedBoxXMax = -1;
-let smoothedBoxYMax = -1;
-let smoothedBoxXMinTrend = 0;
-let smoothedBoxYMinTrend = 0;
-let smoothedBoxXMaxTrend = 0;
-let smoothedBoxYMaxTrend = 0;
+  smoothedBoxXMin: -1,
+  smoothedBoxYMin: -1,
+  smoothedBoxXMax: -1,
+  smoothedBoxYMax: -1,
+  smoothedBoxXMinTrend: 0,
+  smoothedBoxYMinTrend: 0,
+  smoothedBoxXMaxTrend: 0,
+  smoothedBoxYMaxTrend: 0,
+};
 
 // Pre-allocated reusable structures for the worklet thread (CHANGE-2 / TASK-5)
 const MAX_DETECTED_FACES = 5;
@@ -561,6 +563,9 @@ function useResilientTensorflowModel(source: any, label: string) {
   useEffect(() => {
     let active = true;
     const load = async () => {
+      if (source == null) {
+        return;
+      }
       const fallbackChain: { name: string; delegate: TensorflowModelDelegate[] }[] = ENABLE_GPU_DELEGATE
         ? [
             { name: 'GPU', delegate: ['android-gpu'] },
@@ -735,13 +740,62 @@ function MainApp() {
   const [hardeningDebugger, setHardeningDebugger] = useState(false);
   const [hardeningIntegrity, setHardeningIntegrity] = useState(true);
   
+  const [modelSources, setModelSources] = useState<{
+    front: any;
+    back: any;
+    recognition: any;
+  } | null>(null);
+
+  useEffect(() => {
+    const prepareModels = async () => {
+      try {
+        const docPath = RNFS.DocumentDirectoryPath;
+        const frontDest = `${docPath}/blazeface_front.tflite`;
+        const backDest = `${docPath}/blazeface_back.tflite`;
+        const recDest = `${docPath}/mobilefacenet.tflite`;
+
+        const checkAndCopy = async (assetName: string, dest: string) => {
+          const exists = await RNFS.exists(dest);
+          if (!exists) {
+            console.log(`[ModelLoader] Copying asset ${assetName} to ${dest}...`);
+            await RNFS.copyFileAssets(assetName, dest);
+          } else {
+            console.log(`[ModelLoader] Asset ${assetName} already exists at ${dest}`);
+          }
+        };
+
+        if (Platform.OS === 'android') {
+          await checkAndCopy('blazeface_front.tflite', frontDest);
+          await checkAndCopy('blazeface_back.tflite', backDest);
+          await checkAndCopy('mobilefacenet.tflite', recDest);
+
+          setModelSources({
+            front: { url: `file://${frontDest}` },
+            back: { url: `file://${backDest}` },
+            recognition: { url: `file://${recDest}` },
+          });
+        } else {
+          setModelSources({
+            front: BLAZEFACE_FRONT_MODEL,
+            back: BLAZEFACE_BACK_MODEL,
+            recognition: MOBILEFACENET_MODEL,
+          });
+        }
+      } catch (err) {
+        console.error('[ModelLoader] Failed to prepare local models:', err);
+        setRuntimeError(`Model preparation failed: ${errorMessage(err)}`);
+      }
+    };
+    prepareModels();
+  }, []);
+
   const latestEmbeddingRef = useRef<Float32Array | null>(null);
   const [detectedBox, setDetectedBox] = useState<NormalizedBox | undefined>();
   const blazeAnchors = useMemo(() => generateBlazeFaceAnchors(), []);
 
-  const blazeFront = useResilientTensorflowModel(BLAZEFACE_FRONT_MODEL, 'BlazeFace Front');
-  const blazeBack = useResilientTensorflowModel(BLAZEFACE_BACK_MODEL, 'BlazeFace Back');
-  const mobileFaceNet = useResilientTensorflowModel(MOBILEFACENET_MODEL, 'MobileFaceNet');
+  const blazeFront = useResilientTensorflowModel(modelSources ? modelSources.front : null, 'BlazeFace Front');
+  const blazeBack = useResilientTensorflowModel(modelSources ? modelSources.back : null, 'BlazeFace Back');
+  const mobileFaceNet = useResilientTensorflowModel(modelSources ? modelSources.recognition : null, 'MobileFaceNet');
   const { resize, error: resizeError } = useSafeResizePlugin();
 
   const blazeFrontModel = blazeFront.state === 'loaded' ? blazeFront.model : undefined;
@@ -1781,8 +1835,8 @@ function MainApp() {
   const frameProcessor = useFrameProcessor(
     frame => {
       'worklet';
-      if (workletWarmUpFrames < 4) {
-        workletWarmUpFrames++;
+      if (workletState.warmUpFrames < 4) {
+        workletState.warmUpFrames++;
         return;
       }
       const blazeBox = boxedBlaze.value;
@@ -1798,7 +1852,7 @@ function MainApp() {
         return;
       }
  
-      runAtTargetFps(workletInferenceFps, () => {
+      runAtTargetFps(workletState.inferenceFps, () => {
         'worklet';
         if (!frame.isValid) {
           return;
@@ -1873,38 +1927,38 @@ function MainApp() {
             xMax: preAllocatedBoxes.xMax[bestFaceIdx],
             yMax: preAllocatedBoxes.yMax[bestFaceIdx],
           };
-
+ 
           // Double Exponential Smoothing for Bounding Box (Phase 11 / CHANGE-16)
           const smoothAlpha = 0.45;
           const smoothBeta = 0.25;
           
-          if (smoothedBoxXMin < 0) {
-            smoothedBoxXMin = rawBoxRaw.xMin;
-            smoothedBoxYMin = rawBoxRaw.yMin;
-            smoothedBoxXMax = rawBoxRaw.xMax;
-            smoothedBoxYMax = rawBoxRaw.yMax;
+          if (workletState.smoothedBoxXMin < 0) {
+            workletState.smoothedBoxXMin = rawBoxRaw.xMin;
+            workletState.smoothedBoxYMin = rawBoxRaw.yMin;
+            workletState.smoothedBoxXMax = rawBoxRaw.xMax;
+            workletState.smoothedBoxYMax = rawBoxRaw.yMax;
           } else {
-            const lastXMin = smoothedBoxXMin;
-            const lastYMin = smoothedBoxYMin;
-            const lastXMax = smoothedBoxXMax;
-            const lastYMax = smoothedBoxYMax;
+            const lastXMin = workletState.smoothedBoxXMin;
+            const lastYMin = workletState.smoothedBoxYMin;
+            const lastXMax = workletState.smoothedBoxXMax;
+            const lastYMax = workletState.smoothedBoxYMax;
             
-            smoothedBoxXMin = smoothAlpha * rawBoxRaw.xMin + (1 - smoothAlpha) * (smoothedBoxXMin + smoothedBoxXMinTrend);
-            smoothedBoxYMin = smoothAlpha * rawBoxRaw.yMin + (1 - smoothAlpha) * (smoothedBoxYMin + smoothedBoxYMinTrend);
-            smoothedBoxXMax = smoothAlpha * rawBoxRaw.xMax + (1 - smoothAlpha) * (smoothedBoxXMax + smoothedBoxXMaxTrend);
-            smoothedBoxYMax = smoothAlpha * rawBoxRaw.yMax + (1 - smoothAlpha) * (smoothedBoxYMax + smoothedBoxYMaxTrend);
+            workletState.smoothedBoxXMin = smoothAlpha * rawBoxRaw.xMin + (1 - smoothAlpha) * (workletState.smoothedBoxXMin + workletState.smoothedBoxXMinTrend);
+            workletState.smoothedBoxYMin = smoothAlpha * rawBoxRaw.yMin + (1 - smoothAlpha) * (workletState.smoothedBoxYMin + workletState.smoothedBoxYMinTrend);
+            workletState.smoothedBoxXMax = smoothAlpha * rawBoxRaw.xMax + (1 - smoothAlpha) * (workletState.smoothedBoxXMax + workletState.smoothedBoxXMaxTrend);
+            workletState.smoothedBoxYMax = smoothAlpha * rawBoxRaw.yMax + (1 - smoothAlpha) * (workletState.smoothedBoxYMax + workletState.smoothedBoxYMaxTrend);
             
-            smoothedBoxXMinTrend = smoothBeta * (smoothedBoxXMin - lastXMin) + (1 - smoothBeta) * smoothedBoxXMinTrend;
-            smoothedBoxYMinTrend = smoothBeta * (smoothedBoxYMin - lastYMin) + (1 - smoothBeta) * smoothedBoxYMinTrend;
-            smoothedBoxXMaxTrend = smoothBeta * (smoothedBoxXMax - lastXMax) + (1 - smoothBeta) * smoothedBoxXMaxTrend;
-            smoothedBoxYMaxTrend = smoothBeta * (smoothedBoxYMax - lastYMax) + (1 - smoothBeta) * smoothedBoxYMaxTrend;
+            workletState.smoothedBoxXMinTrend = smoothBeta * (workletState.smoothedBoxXMin - lastXMin) + (1 - smoothBeta) * workletState.smoothedBoxXMinTrend;
+            workletState.smoothedBoxYMinTrend = smoothBeta * (workletState.smoothedBoxYMin - lastYMin) + (1 - smoothBeta) * workletState.smoothedBoxYMinTrend;
+            workletState.smoothedBoxXMaxTrend = smoothBeta * (workletState.smoothedBoxXMax - lastXMax) + (1 - smoothBeta) * workletState.smoothedBoxXMaxTrend;
+            workletState.smoothedBoxYMaxTrend = smoothBeta * (workletState.smoothedBoxYMax - lastYMax) + (1 - smoothBeta) * workletState.smoothedBoxYMaxTrend;
           }
           
           const bestBox = {
-            xMin: smoothedBoxXMin,
-            yMin: smoothedBoxYMin,
-            xMax: smoothedBoxXMax,
-            yMax: smoothedBoxYMax,
+            xMin: workletState.smoothedBoxXMin,
+            yMin: workletState.smoothedBoxYMin,
+            xMax: workletState.smoothedBoxXMax,
+            yMax: workletState.smoothedBoxYMax,
           };
           
           const bestKeypoints = [
@@ -1915,14 +1969,14 @@ function MainApp() {
             { x: preAllocatedBoxes.keypointsX[bestFaceIdx * 6 + 4], y: preAllocatedBoxes.keypointsY[bestFaceIdx * 6 + 4] },
             { x: preAllocatedBoxes.keypointsX[bestFaceIdx * 6 + 5], y: preAllocatedBoxes.keypointsY[bestFaceIdx * 6 + 5] },
           ];
-
+ 
           const nowMs = Date.now();
           
           // Tracking stability & loss recovery timer logic (CHANGE-5, CHANGE-6)
           let isSameFace = false;
-          if (lastTrackedNoseX > -900 && lastTrackedNoseY > -900) {
-            const dx = bestKeypoints[2].x - lastTrackedNoseX;
-            const dy = bestKeypoints[2].y - lastTrackedNoseY;
+          if (workletState.lastTrackedNoseX > -900 && workletState.lastTrackedNoseY > -900) {
+            const dx = bestKeypoints[2].x - workletState.lastTrackedNoseX;
+            const dy = bestKeypoints[2].y - workletState.lastTrackedNoseY;
             const dist = Math.sqrt(dx * dx + dy * dy);
             if (dist < 0.15) {
               isSameFace = true;
@@ -1930,34 +1984,34 @@ function MainApp() {
           }
           
           if (!isSameFace) {
-            faceStabilityStartTime = nowMs;
-            lastTrackedNoseX = bestKeypoints[2].x;
-            lastTrackedNoseY = bestKeypoints[2].y;
+            workletState.faceStabilityStartTime = nowMs;
+            workletState.lastTrackedNoseX = bestKeypoints[2].x;
+            workletState.lastTrackedNoseY = bestKeypoints[2].y;
           }
-          lastFaceDetectedTime = nowMs;
-
-          const faceStableDuration = nowMs - faceStabilityStartTime;
+          workletState.lastFaceDetectedTime = nowMs;
+ 
+          const faceStableDuration = nowMs - workletState.faceStabilityStartTime;
           const isFaceStable = faceStableDuration >= 1200; // Require 1.2s persistence (Change-5)
-
+ 
           // Thermal Protection check (CHANGE-7)
           let skipHeavyChecksDueToThermal = false;
-          if (workletLatencyCount >= 5) {
-            const avg = (workletLatency1 + workletLatency2 + workletLatency3 + workletLatency4 + workletLatency5) / 5;
+          if (workletState.latencyCount >= 5) {
+            const avg = (workletState.latency1 + workletState.latency2 + workletState.latency3 + workletState.latency4 + workletState.latency5) / 5;
             if (avg > 350) {
-              workletInferenceFps = 1;
+              workletState.inferenceFps = 1;
               skipHeavyChecksDueToThermal = true;
             } else if (avg > 220) {
-              workletInferenceFps = 2;
+              workletState.inferenceFps = 2;
               skipHeavyChecksDueToThermal = true;
             } else {
-              workletInferenceFps = 4;
+              workletState.inferenceFps = 4;
             }
           }
-
+ 
           // Throttled Heavy Spoof analysis (CHANGE-1)
-          const runHeavySpoof = (nowMs - lastHeavySpoofTime > 750) && !skipHeavyChecksDueToThermal;
+          const runHeavySpoof = (nowMs - workletState.lastHeavySpoofTime > 750) && !skipHeavyChecksDueToThermal;
           if (runHeavySpoof) {
-            lastHeavySpoofTime = nowMs;
+            workletState.lastHeavySpoofTime = nowMs;
             const spoofRes = verifyAntiSpoofing(
               blazePixels as Float32Array,
               blazeInput.width,
@@ -1966,12 +2020,12 @@ function MainApp() {
               bestKeypoints,
               activeEmulator
             );
-            cachedSpoofResult = spoofRes.spoofDetected;
-            cachedSpoofConfidence = spoofRes.spoofConfidence;
+            workletState.cachedSpoofResult = spoofRes.spoofDetected;
+            workletState.cachedSpoofConfidence = spoofRes.spoofConfidence;
           }
-
-          const spoofDetected = cachedSpoofResult;
-
+ 
+          const spoofDetected = workletState.cachedSpoofResult;
+ 
           // 1. Run face-quality validation BEFORE MobileFaceNet embedding extraction (CHANGE-2)
           const quality = validateFaceQuality(
             blazePixels as Float32Array,
@@ -1999,7 +2053,7 @@ function MainApp() {
           
           if (qualityError != null) {
             const latency = performance.now() - startTime;
-            handleFrameResult(bestBox, bestKeypoints, blazePixels as Float32Array, null, qualityError, validFaceCount, latency, spoofDetected, cachedSpoofConfidence);
+            handleFrameResult(bestBox, bestKeypoints, blazePixels as Float32Array, null, qualityError, validFaceCount, latency, spoofDetected, workletState.cachedSpoofConfidence);
             return;
           }
           
@@ -2028,39 +2082,39 @@ function MainApp() {
           } catch (tfliteErr) {
             console.log('TFLite inference error: ' + String(tfliteErr));
             const latency = performance.now() - startTime;
-            handleFrameResult(bestBox, bestKeypoints, blazePixels as Float32Array, null, null, validFaceCount, latency, spoofDetected, cachedSpoofConfidence);
+            handleFrameResult(bestBox, bestKeypoints, blazePixels as Float32Array, null, null, validFaceCount, latency, spoofDetected, workletState.cachedSpoofConfidence);
             return;
           }
           
           if (embeddingOutputs.length === 0 || embeddingOutputs[0].byteLength % 4 !== 0) {
             const latency = performance.now() - startTime;
-            handleFrameResult(bestBox, bestKeypoints, blazePixels as Float32Array, null, null, validFaceCount, latency, spoofDetected, cachedSpoofConfidence);
+            handleFrameResult(bestBox, bestKeypoints, blazePixels as Float32Array, null, null, validFaceCount, latency, spoofDetected, workletState.cachedSpoofConfidence);
             return;
           }
  
           const embedding = new Float32Array(embeddingOutputs[0]);
           const latency = performance.now() - startTime;
           
-          workletLatency5 = workletLatency4;
-          workletLatency4 = workletLatency3;
-          workletLatency3 = workletLatency2;
-          workletLatency2 = workletLatency1;
-          workletLatency1 = latency;
-          if (workletLatencyCount < 5) {
-            workletLatencyCount++;
+          workletState.latency5 = workletState.latency4;
+          workletState.latency4 = workletState.latency3;
+          workletState.latency3 = workletState.latency2;
+          workletState.latency2 = workletState.latency1;
+          workletState.latency1 = latency;
+          if (workletState.latencyCount < 5) {
+            workletState.latencyCount++;
           }
-          if (workletLatencyCount >= 5) {
-            const avg = (workletLatency1 + workletLatency2 + workletLatency3 + workletLatency4 + workletLatency5) / 5;
+          if (workletState.latencyCount >= 5) {
+            const avg = (workletState.latency1 + workletState.latency2 + workletState.latency3 + workletState.latency4 + workletState.latency5) / 5;
             if (avg > 250) {
-              workletInferenceFps = 2;
+              workletState.inferenceFps = 2;
             } else if (avg > 450) {
-              workletInferenceFps = 1;
+              workletState.inferenceFps = 1;
             } else if (avg < 140) {
-              workletInferenceFps = 4;
+              workletState.inferenceFps = 4;
             }
           }
           
-          handleFrameResult(bestBox, bestKeypoints, blazePixels as Float32Array, embedding, null, validFaceCount, latency, spoofDetected, cachedSpoofConfidence);
+          handleFrameResult(bestBox, bestKeypoints, blazePixels as Float32Array, embedding, null, validFaceCount, latency, spoofDetected, workletState.cachedSpoofConfidence);
         } catch (error) {
           console.log('Frame processor error: ' + String(error));
           reportRuntimeError(String(error));

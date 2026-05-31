@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { scaleFont, scaleSpacing, isTablet } from '../utils/layout';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Camera } from 'react-native-vision-camera';
 
 interface OnboardingScreenProps {
   step: number;
@@ -23,6 +24,12 @@ interface OnboardingScreenProps {
   detectedBox: any;
   latestEmbedding: any;
   isDarkMode: boolean;
+  
+  // Camera props for embedded preview
+  device: any;
+  format: any;
+  isCameraActive: boolean;
+  frameProcessor: any;
 }
 
 export function OnboardingScreen({
@@ -37,6 +44,10 @@ export function OnboardingScreen({
   detectedBox,
   latestEmbedding,
   isDarkMode,
+  device,
+  format,
+  isCameraActive,
+  frameProcessor,
 }: OnboardingScreenProps) {
   
   const colors = {
@@ -382,9 +393,22 @@ export function OnboardingScreen({
           accessibilityLabel="Enter admin username"
         />
 
-        {/* Camera preview placeholder with transparent overlays.
-            The actual Camera is rendered behind in App.tsx. This placeholder provides the guides. */}
         <View style={dynamicStyles.cameraPreviewPlaceholder}>
+          {hasPermission && device != null && isCameraActive ? (
+            <Camera
+              key={device.id}
+              style={StyleSheet.absoluteFill}
+              device={device}
+              isActive={isCameraActive}
+              format={format}
+              fps={30}
+              resizeMode="cover"
+              pixelFormat="rgb"
+              enableBufferCompression={false}
+              androidPreviewViewType="surface-view"
+              frameProcessor={frameProcessor}
+            />
+          ) : null}
           <View style={dynamicStyles.cameraOverlay}>
             <View style={dynamicStyles.guideCircle} />
             <Text style={dynamicStyles.feedbackText}>

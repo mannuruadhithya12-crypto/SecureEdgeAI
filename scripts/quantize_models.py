@@ -131,7 +131,7 @@ def main():
     print(f"Found {len(model_files)} model(s) to process:\n")
 
     success_count = 0
-    for fpath, model_dir in fname:
+    for fpath, model_dir in model_files:
         basename = os.path.basename(fpath)
         name, ext = os.path.splitext(basename)
         output_path = os.path.join(model_dir, f"{name}{OUTPUT_SUFFIX}{ext}")

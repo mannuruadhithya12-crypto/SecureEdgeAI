@@ -26,17 +26,19 @@ jest.mock('react-native-vision-camera', () => {
 
 // Mock react-native-fast-tflite
 jest.mock('react-native-fast-tflite', () => {
+  const modelMock = {
+    inputs: [{ name: 'input', dataType: 'float32', shape: [1, 128, 128, 3] }],
+    outputs: [
+      { name: 'regressors', dataType: 'float32', shape: [1, 896, 16] },
+      { name: 'classificators', dataType: 'float32', shape: [1, 896, 1] }
+    ],
+  };
   return {
     useTensorflowModel: jest.fn(() => ({
       state: 'loaded',
-      model: {
-        inputs: [{ name: 'input', dataType: 'float32', shape: [1, 128, 128, 3] }],
-        outputs: [
-          { name: 'regressors', dataType: 'float32', shape: [1, 896, 16] },
-          { name: 'classificators', dataType: 'float32', shape: [1, 896, 1] }
-        ],
-      }
-    }))
+      model: modelMock
+    })),
+    loadTensorflowModel: jest.fn(() => Promise.resolve(modelMock)),
   };
 });
 

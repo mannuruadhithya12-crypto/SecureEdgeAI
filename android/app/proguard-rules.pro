@@ -24,6 +24,8 @@
 
 # react-native-sqlcipher-storage
 -keep class org.pwrup.sqlcipher.** { *; }
+-keep class net.sqlcipher.** { *; }
+-keep class net.sqlcipher.database.** { *; }
 
 # react-native-sqlite-storage
 -keep class org.pgsqlite.** { *; }

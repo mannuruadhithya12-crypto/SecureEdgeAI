@@ -27,4 +27,13 @@ jest.mock('react-native-sqlite-storage', () => {
       executeSql: jest.fn().mockResolvedValue([{ rows: { length: 0, item: () => null } }]),
     }),
   };
-});
+}, { virtual: true });
+
+jest.mock('react-native-sqlcipher-storage', () => {
+  return {
+    enablePromise: jest.fn(),
+    openDatabase: jest.fn().mockResolvedValue({
+      executeSql: jest.fn().mockResolvedValue([{ rows: { length: 0, item: () => null } }]),
+    }),
+  };
+}, { virtual: true });

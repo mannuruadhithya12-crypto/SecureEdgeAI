@@ -7,6 +7,7 @@ module.exports = {
   testPathIgnorePatterns: [
     '/node_modules/',
     '/__tests__/mocks/',
+    '/mobile-app/',
   ],
   transformIgnorePatterns: [
     'node_modules/(?!(react-native|@react-native|@react-navigation|@react-native-community)/)',
