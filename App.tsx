@@ -1339,54 +1339,21 @@ function MainApp() {
       }
     }
 
-    if (activeUser == null) {
+    if (activeUser == null && currentScreen !== 'Onboarding') {
       setAuthState('IDLE');
       setStatus('No active profile. Select or register a profile.');
-      setDetectedBox(undefined);
+      setDetectedBox(box || undefined);
       return;
     }
 
     // Active User Lockout Check (CHANGE-5, CHANGE-9)
     // Relaxed check if Emulator Mode is active to help virtual testing
-    const userLockout = lockoutExpiry[activeUser.name] || 0;
-    if (now < userLockout && !settings.emulatorMode) {
+    const userLockout = activeUser ? (lockoutExpiry[activeUser.name] || 0) : 0;
+    if (activeUser && now < userLockout && !settings.emulatorMode) {
       const secondsLeft = Math.ceil((userLockout - now) / 1000);
       setAuthState('REJECTED');
       setStatus(`ACCESS DENIED: ${activeUser.name} is locked out. Try again in ${secondsLeft}s.`);
       setDetectedBox(box || undefined);
-      return;
-    }
-
-    if (stableFaceCount > 1) {
-      setDetectedBox(box || undefined);
-      latestEmbeddingRef.current = null;
-      setLivenessBlink(false);
-      setLivenessHead(false);
-      resetBlinkHistory();
-      resetHeadMovementHistory();
-      setRollingScores([]);
-      setAuthState('REJECTED');
-      setStatus('Multiple faces detected');
-      lastRejectionTimeRef.current = now;
-      return;
-    }
-
-    if (qualityError != null) {
-      setDetectedBox(box || undefined);
-      latestEmbeddingRef.current = null;
-      setAuthState('SCANNING');
-      
-      if (qualityError === 'Face too dark') {
-        setStatus('Face too dark. Improve lighting.');
-      } else if (qualityError === 'Face too blurry') {
-        setStatus('Face too blurry. Hold still.');
-      } else if (qualityError === 'Face too small') {
-        setStatus('Face too small. Move closer.');
-      } else if (qualityError === 'Face alignment invalid') {
-        setStatus('Center your face in the guide.');
-      } else {
-        setStatus(qualityError);
-      }
       return;
     }
 
@@ -1408,18 +1375,91 @@ function MainApp() {
         setAuthState('SCANNING');
       }
       
-      const storedCount = Object.keys(storedEmbeddings).length;
-      if (storedCount === 0) {
-        setStatus('No registered profiles. Please register first.');
+      if (currentScreen === 'Onboarding') {
+        setStatus('Camera Ready');
       } else {
-        setStatus(`Align face in the guide to authenticate: ${activeUser.name}`);
+        const storedCount = Object.keys(storedEmbeddings).length;
+        if (storedCount === 0) {
+          setStatus('No registered profiles. Please register first.');
+        } else if (activeUser) {
+          setStatus(`Align face in the guide to authenticate: ${activeUser.name}`);
+        } else {
+          setStatus('No active profile. Select or register a profile.');
+        }
       }
       return;
     }
 
-    lastFaceTimeRef.current = now;
+    console.log("[QA] FACE_DETECTED");
 
+    const faceWidth = box.xMax - box.xMin;
+    const faceHeight = box.yMax - box.yMin;
+    const tooLarge = faceWidth > 0.70 || faceHeight > 0.70;
+
+    if (qualityError !== 'Face alignment invalid' && !tooLarge) {
+      console.log("[QA] FACE_CENTERED");
+    }
+
+    if (!spoofDetected) {
+      console.log("[QA] ANTI_SPOOF_PASSED");
+    }
+
+    lastFaceTimeRef.current = now;
     setDetectedBox(box);
+
+    if (stableFaceCount > 1) {
+      latestEmbeddingRef.current = null;
+      setLivenessBlink(false);
+      setLivenessHead(false);
+      resetBlinkHistory();
+      resetHeadMovementHistory();
+      setRollingScores([]);
+      setAuthState('REJECTED');
+      setStatus('Multiple faces detected');
+      lastRejectionTimeRef.current = now;
+      return;
+    }
+
+    if (tooLarge) {
+      latestEmbeddingRef.current = null;
+      setAuthState('SCANNING');
+      if (currentScreen === 'Onboarding') {
+        setStatus('Move Back');
+      } else {
+        setStatus('Face too close. Move back.');
+      }
+      return;
+    }
+
+    if (qualityError != null) {
+      latestEmbeddingRef.current = null;
+      setAuthState('SCANNING');
+      
+      if (currentScreen === 'Onboarding') {
+        if (qualityError === 'Face too small') {
+          setStatus('Move Closer');
+        } else if (qualityError === 'Face alignment invalid') {
+          setStatus('Center Face');
+        } else if (qualityError === 'Hold still...') {
+          setStatus('Face Detected');
+        } else {
+          setStatus(qualityError);
+        }
+      } else {
+        if (qualityError === 'Face too dark') {
+          setStatus('Face too dark. Improve lighting.');
+        } else if (qualityError === 'Face too blurry') {
+          setStatus('Face too blurry. Hold still.');
+        } else if (qualityError === 'Face too small') {
+          setStatus('Face too small. Move closer.');
+        } else if (qualityError === 'Face alignment invalid') {
+          setStatus('Center your face in the guide.');
+        } else {
+          setStatus(qualityError);
+        }
+      }
+      return;
+    }
 
     if (embedding == null) {
       latestEmbeddingRef.current = null;
@@ -1429,7 +1469,21 @@ function MainApp() {
       resetHeadMovementHistory();
       setRollingScores([]);
       setAuthState('SCANNING');
-      setStatus('Face validation failed. Align face inside the guide.');
+      if (currentScreen === 'Onboarding') {
+        setStatus('Face Detected');
+      } else {
+        setStatus('Face validation failed. Align face inside the guide.');
+      }
+      return;
+    }
+
+    if (currentScreen === 'Onboarding') {
+      if (embedding.length !== 128 && embedding.length !== 512) {
+        console.log(`[QA] Invalid embedding length: ${embedding.length}`);
+      }
+      console.log("[QA] EMBEDDING_GENERATED");
+      setStatus("Generating Face Template");
+      latestEmbeddingRef.current = embedding;
       return;
     }
 
@@ -1678,16 +1732,42 @@ function MainApp() {
       return;
     }
 
+    setStatus("Saving Profile");
+
     try {
       let user = usersList.find(u => u.name.toLowerCase() === name.toLowerCase());
       let userId = user ? user.id : null;
       
-      if (!userId) {
-        userId = await createUser(name);
+      // Try/catch around Database writes
+      try {
+        if (!userId) {
+          userId = await createUser(name);
+        }
+        await insertEmbedding(userId, currentEmbedding, 'MobileFaceNet_v1');
+        console.log("[QA] DATABASE_WRITE_SUCCESS");
+      } catch (dbErr) {
+        console.error('[QA] Database write error:', dbErr);
+        setStatus('Database write failed');
+        throw dbErr;
       }
       
-      await insertEmbedding(userId, currentEmbedding, 'MobileFaceNet_v1');
-      await loadAll();
+      // Try/catch around Profile activation
+      try {
+        await loadAll();
+        
+        // Find and set the registered user as activeUser
+        const dbUsers = await getAllUsers();
+        const registeredUser = dbUsers.find(u => u.id === userId);
+        if (registeredUser) {
+          setActiveUser(registeredUser);
+          await saveActiveUser(registeredUser.name);
+          console.log("[QA] PROFILE_ACTIVATED");
+        }
+      } catch (actErr) {
+        console.error('[QA] Profile activation error:', actErr);
+        setStatus('Profile activation failed');
+        throw actErr;
+      }
 
       // Zero out registered embedding memory (CHANGE-11)
       currentEmbedding.fill(0);
@@ -1695,13 +1775,15 @@ function MainApp() {
       
       // Save onboarding completion state (CHANGE-9)
       await saveSecuredData('setting_onboardingCompleted', 'true');
-
       
       setRegistrationName('');
-      setStatus(`Successfully registered user: ${name}!`);
+      setStatus("Profile Created Successfully");
 
-      // Force transition to scanner view
-      setCurrentScreen('Verification');
+      // Give a tiny timeout for user to see the success message before switching screen
+      setTimeout(() => {
+        setCurrentScreen('Verification');
+      }, 1000);
+
     } catch (err) {
       setStatus(`Registration failed: ${errorMessage(err)}`);
     }
@@ -1875,7 +1957,13 @@ function MainApp() {
             dataType: blazeInput.dataType,
           });
           const blazeBuffer = viewToExactArrayBuffer(blazePixels);
-          const blazeOutputs = blazeModel.runSync([blazeBuffer]);
+          let blazeOutputs;
+          try {
+            blazeOutputs = blazeModel.runSync([blazeBuffer]);
+          } catch (detErr) {
+            console.error('[QA] Face detection failed:', detErr);
+            throw detErr;
+          }
  
           if (blazeOutputs.length < 2) {
             const latency = performance.now() - startTime;
@@ -2027,14 +2115,20 @@ function MainApp() {
           const spoofDetected = workletState.cachedSpoofResult;
  
           // 1. Run face-quality validation BEFORE MobileFaceNet embedding extraction (CHANGE-2)
-          const quality = validateFaceQuality(
-            blazePixels as Float32Array,
-            blazeInput.width,
-            blazeInput.height,
-            bestBox,
-            bestKeypoints,
-            activeEmulator
-          );
+          let quality;
+          try {
+            quality = validateFaceQuality(
+              blazePixels as Float32Array,
+              blazeInput.width,
+              blazeInput.height,
+              bestBox,
+              bestKeypoints,
+              activeEmulator
+            );
+          } catch (alignErr) {
+            console.error('[QA] Face alignment quality check failed:', alignErr);
+            throw alignErr;
+          }
           
           let qualityError: string | null = null;
           if (!isFaceStable) {
@@ -2080,7 +2174,7 @@ function MainApp() {
           try {
             embeddingOutputs = faceNetModel.runSync([faceBuffer]);
           } catch (tfliteErr) {
-            console.log('TFLite inference error: ' + String(tfliteErr));
+            console.error('[QA] Embedding generation failed:', tfliteErr);
             const latency = performance.now() - startTime;
             handleFrameResult(bestBox, bestKeypoints, blazePixels as Float32Array, null, null, validFaceCount, latency, spoofDetected, workletState.cachedSpoofConfidence);
             return;
@@ -2209,6 +2303,7 @@ function MainApp() {
           requestPermission={requestPermission}
           cameraUnavailable={device == null || cameraError != null}
           onRegisterPressed={() => {
+            console.log("[QA] BUTTON_CLICKED");
             setCurrentScreen('Onboarding');
             setOnboardingStep(3);
           }}
