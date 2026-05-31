@@ -352,6 +352,16 @@ function decodeBlazeFaceBoxes(
   preAllocatedBoxes.count = 0;
   let centersCount = 0;
   
+  let maxRaw = -Infinity;
+  let maxScore = -Infinity;
+  for (let i = 0; i < 896; i++) {
+    const rawScore = classificators[i];
+    const score = 1 / (1 + Math.exp(-rawScore));
+    if (rawScore > maxRaw) maxRaw = rawScore;
+    if (score > maxScore) maxScore = score;
+  }
+  console.log("[QA] BLAZEFACE_SCORES maxRaw=" + maxRaw + " maxScore=" + maxScore);
+
   for (let i = 0; i < 896; i++) {
     const rawScore = classificators[i];
     const score = 1 / (1 + Math.exp(-rawScore));
@@ -1916,18 +1926,17 @@ function MainApp() {
       setStatus(`Restore failed: ${errorMessage(err)}`);
     }
   };
-
-
   const frameProcessor = useFrameProcessor(
     frame => {
       'worklet';
+      console.log("[QA] FRAME_RECEIVED");
       if (workletState.warmUpFrames < 4) {
         workletState.warmUpFrames++;
         return;
       }
       const blazeBox = boxedBlaze.value;
       const faceNetBox = boxedFaceNet.value;
- 
+  
       if (
         blazeBox == null ||
         faceNetBox == null ||
@@ -1950,6 +1959,7 @@ function MainApp() {
           const faceNetModel = faceNetBox.unbox();
           const rotation = rotationForFrame(frame.orientation);
  
+          console.log("[QA] BLAZEFACE_START");
           const blazePixels = resize(frame, {
             scale: {
               width: blazeInput.width,
@@ -1960,10 +1970,12 @@ function MainApp() {
             pixelFormat: 'rgb',
             dataType: blazeInput.dataType,
           });
+          console.log("[QA] FRAME_RESIZED");
           const blazeBuffer = viewToExactArrayBuffer(blazePixels);
           let blazeOutputs;
           try {
             blazeOutputs = blazeModel.runSync([blazeBuffer]);
+            console.log("[QA] BLAZEFACE_DONE");
           } catch (detErr) {
             console.error('[QA] Face detection failed:', detErr);
             throw detErr;
@@ -2012,6 +2024,8 @@ function MainApp() {
             handleFrameResult(null, null, null, null, null, 0, latency, false, 0.0);
             return;
           }
+          
+          console.log("[QA] FACE_BOX_FOUND");
           
           const rawBoxRaw = {
             xMin: preAllocatedBoxes.xMin[bestFaceIdx],
@@ -2104,14 +2118,20 @@ function MainApp() {
           const runHeavySpoof = (nowMs - workletState.lastHeavySpoofTime > 750) && !skipHeavyChecksDueToThermal;
           if (runHeavySpoof) {
             workletState.lastHeavySpoofTime = nowMs;
-            const spoofRes = verifyAntiSpoofing(
-              blazePixels as Float32Array,
-              blazeInput.width,
-              blazeInput.height,
-              bestBox,
-              bestKeypoints,
-              activeEmulator
-            );
+            let spoofRes;
+            try {
+              spoofRes = verifyAntiSpoofing(
+                blazePixels as Float32Array,
+                blazeInput.width,
+                blazeInput.height,
+                bestBox,
+                bestKeypoints,
+                activeEmulator
+              );
+            } catch (spoofErr) {
+              console.error('[QA] Anti-spoof check failed:', spoofErr);
+              throw spoofErr;
+            }
             workletState.cachedSpoofResult = spoofRes.spoofDetected;
             workletState.cachedSpoofConfidence = spoofRes.spoofConfidence;
           }
