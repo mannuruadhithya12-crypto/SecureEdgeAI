@@ -891,7 +891,7 @@ function MainApp() {
       if (value !== 'auto' && (value < 1 || value > 8)) {
         return false;
       }
-      workletInferenceFps = value === 'auto' ? 4 : value;
+      workletState.inferenceFps = value === 'auto' ? 4 : value;
     }
     if (key === 'cameraPosition') {
       if (value !== 'front' && value !== 'back') {
@@ -1281,7 +1281,7 @@ function MainApp() {
 
     if (lastArrivalRef.current > 0) {
       const elapsed = now - lastArrivalRef.current;
-      const expectedGap = 1000 / workletInferenceFps;
+      const expectedGap = 1000 / workletState.inferenceFps;
       if (elapsed > expectedGap * 1.5) {
         const dropped = Math.round(elapsed / expectedGap) - 1;
         droppedFramesRef.current += dropped;
@@ -2138,7 +2138,7 @@ function MainApp() {
   return (
     <View style={styles.container}>
       {/* Background Camera Layer (CHANGE-3, CHANGE-13) */}
-      {isCameraActive && hasPermission && device != null ? (
+      {currentScreen === 'Verification' && isCameraActive && hasPermission && device != null ? (
         <Camera
           key={device.id}
           style={StyleSheet.absoluteFill}
@@ -2174,6 +2174,10 @@ function MainApp() {
           detectedBox={detectedBox}
           latestEmbedding={latestEmbeddingRef.current}
           isDarkMode={settings.darkMode}
+          device={device}
+          format={format}
+          isCameraActive={isCameraActive && isAppForeground}
+          frameProcessor={enableFrameProcessor ? frameProcessor : undefined}
         />
       )}
 
