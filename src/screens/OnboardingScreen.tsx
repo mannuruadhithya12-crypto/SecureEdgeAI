@@ -244,7 +244,10 @@ export function OnboardingScreen({
 
       <TouchableOpacity
         style={dynamicStyles.button}
-        onPress={() => setStep(1)}
+        onPress={() => {
+          console.log("[QA] BUTTON_CLICKED");
+          setStep(1);
+        }}
         accessibilityRole="button"
         accessibilityLabel="Get Started with onboarding"
       >
@@ -303,7 +306,10 @@ export function OnboardingScreen({
       ) : (
         <TouchableOpacity
           style={dynamicStyles.button}
-          onPress={() => setStep(2)}
+          onPress={() => {
+            console.log("[QA] BUTTON_CLICKED");
+            setStep(2);
+          }}
           accessibilityRole="button"
           accessibilityLabel="Continue to next step"
         >
@@ -354,7 +360,10 @@ export function OnboardingScreen({
 
       <TouchableOpacity
         style={dynamicStyles.button}
-        onPress={() => setStep(3)}
+        onPress={() => {
+          console.log("[QA] BUTTON_CLICKED");
+          setStep(3);
+        }}
         accessibilityRole="button"
         accessibilityLabel="Continue to face registration"
       >
@@ -363,7 +372,10 @@ export function OnboardingScreen({
       
       <TouchableOpacity
         style={dynamicStyles.secondaryButton}
-        onPress={() => setStep(1)}
+        onPress={() => {
+          console.log("[QA] BUTTON_CLICKED");
+          setStep(1);
+        }}
         accessibilityRole="button"
         accessibilityLabel="Go back to previous step"
       >
@@ -407,6 +419,9 @@ export function OnboardingScreen({
               enableBufferCompression={false}
               androidPreviewViewType="surface-view"
               frameProcessor={frameProcessor}
+              onInitialized={() => {
+                console.log("[QA] CAMERA_READY");
+              }}
             />
           ) : null}
           <View style={dynamicStyles.cameraOverlay}>
@@ -423,7 +438,10 @@ export function OnboardingScreen({
             { backgroundColor: isRegisterEnabled ? colors.success : colors.primary + '80' },
           ]}
           disabled={!isRegisterEnabled}
-          onPress={handleRegister}
+          onPress={() => {
+            console.log("[QA] BUTTON_CLICKED");
+            handleRegister();
+          }}
           accessibilityRole="button"
           accessibilityLabel="Complete face registration"
         >
@@ -434,7 +452,10 @@ export function OnboardingScreen({
 
         <TouchableOpacity
           style={dynamicStyles.secondaryButton}
-          onPress={() => setStep(2)}
+          onPress={() => {
+            console.log("[QA] BUTTON_CLICKED");
+            setStep(2);
+          }}
           accessibilityRole="button"
           accessibilityLabel="Go back to guidelines"
         >

@@ -1487,6 +1487,10 @@ function MainApp() {
       return;
     }
 
+    if (activeUser == null) {
+      return;
+    }
+
     let isEmbeddingInvalid = false;
     if (embedding.length === 0) {
       isEmbeddingInvalid = true;
@@ -1710,7 +1714,7 @@ function MainApp() {
     }
 
     // Zero out local embedding and clean up references (CHANGE-11)
-    if (currentScreen !== 'Onboarding') {
+    if ((currentScreen as string) !== 'Onboarding') {
       if (latestEmbeddingRef.current) {
         latestEmbeddingRef.current.fill(0);
         latestEmbeddingRef.current = null;
