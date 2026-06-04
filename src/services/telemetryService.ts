@@ -17,7 +17,7 @@ export async function fetchSystemTelemetry(
   try {
     const stats = await getProcessTelemetry();
     memoryMb = stats.usedMemoryMb;
-  } catch (error) {
+  } catch {
     // Fallback simulation in DEV/Emulator
     const now = Date.now();
     const memoryUsed = 92.4 + (fallbackUserCount * 0.12) + (Math.sin(now / 10000) * 0.5);

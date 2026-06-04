@@ -139,7 +139,7 @@ async function processQueue(): Promise<void> {
         // Handle server error (e.g. 500 or 503)
         throw new Error(response.error || 'Server returned non-200 response');
       }
-    } catch (err) {
+    } catch {
       // Failure
       const nextRetryCount = item.retry_count + 1;
       const lastRetryAt = new Date().toISOString();

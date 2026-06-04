@@ -10,12 +10,12 @@ import {
   Animated,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { Camera, useCameraFormat, useCameraPermission, useFrameProcessor, runAtTargetFps } from 'react-native-vision-camera';
+import { Camera, useCameraDevice, useCameraFormat, useCameraPermission, useFrameProcessor, runAtTargetFps } from 'react-native-vision-camera';
 import { loadTensorflowModel } from 'react-native-fast-tflite';
+import { NitroModules } from 'react-native-nitro-modules';
 import { useRunOnJS } from 'react-native-worklets-core';
 import { createResizePlugin } from 'vision-camera-resize-plugin';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import RNFS from 'react-native-fs';
 
 import { AppHeader } from '../components/AppHeader';
 import { PrimaryButton } from '../components/PrimaryButton';
@@ -32,26 +32,18 @@ import { detectHeadMovement, getHeadMovementConfidence, resetHeadMovementHistory
 import { validateFaceQuality } from '../ai/faceQuality';
 import { verifyAntiSpoofing, resetAntiSpoofHistory } from '../security/antiSpoofing';
 import { authenticateFace } from '../services/authenticateFace';
+import { BLAZEFACE_FRONT_MODEL, MOBILEFACENET_MODEL, prepareTfliteModels } from '../ai/modelSources';
 
 import {
   generateBlazeFaceAnchors,
   decodeBlazeFaceBoxes,
   faceCropForFrame,
-  rotationForFrame,
   unprocessBox,
-  viewToExactArrayBuffer,
   preAllocatedBoxes,
   NormalizedBox,
 } from '../utils/frameHelpers';
 
 const { width: windowWidth, height: windowHeight } = Dimensions.get('window');
-
-const BLAZEFACE_FRONT_MODEL = __DEV__
-  ? require('../assets/models/blazeface_front.tflite')
-  : { url: `file://${RNFS.DocumentDirectoryPath}/blazeface_front.tflite` };
-const MOBILEFACENET_MODEL = __DEV__
-  ? require('../assets/models/mobilefacenet.tflite')
-  : { url: `file://${RNFS.DocumentDirectoryPath}/mobilefacenet.tflite` };
 
 declare const performance: { now(): number };
 
@@ -68,6 +60,8 @@ export function FaceAuthenticationScreen() {
   const [detectedBox, setDetectedBox] = useState<NormalizedBox | undefined>();
   const [modelsReady, setModelsReady] = useState(false);
   const [isCameraActive, setIsCameraActive] = useState(false);
+  const [blazeModel, setBlazeModel] = useState<any>(null);
+  const [faceModel, setFaceModel] = useState<any>(null);
 
   // Performance Telemetry States
   const [devFps, setDevFps] = useState(30);
@@ -94,6 +88,13 @@ export function FaceAuthenticationScreen() {
   const lastPerfUpdateTimeRef = useRef(0);
   const lastArrivalRef = useRef(0);
   const droppedFramesRef = useRef(0);
+  const qaFrameReceivedLoggedRef = useRef(false);
+  const qaFrameProcessorLoggedRef = useRef(false);
+  const qaFrameResizeLoggedRef = useRef(false);
+  const qaBlazeStartLoggedRef = useRef(false);
+  const qaBlazeDoneLoggedRef = useRef(false);
+  const qaFaceDetectedLoggedRef = useRef(false);
+  const qaAntiSpoofLoggedRef = useRef(false);
 
   // Stability metrics
   const lastTrackedNoseXRef = useRef(-999);
@@ -159,16 +160,27 @@ export function FaceAuthenticationScreen() {
 
   const { hardeningRoot, hardeningDebugger, hardeningIntegrity } = useSecurity(settings.telemetryEnabled);
 
+  const preferredDevice = useCameraDevice(settings.cameraPosition);
+  const frontDevice = useCameraDevice('front');
+  const backDevice = useCameraDevice('back');
+  const device = preferredDevice ?? frontDevice ?? backDevice;
+  const boxedBlazeModel = useMemo(() => (blazeModel != null ? NitroModules.box(blazeModel) : undefined), [blazeModel]);
+  const boxedFaceModel = useMemo(() => (faceModel != null ? NitroModules.box(faceModel) : undefined), [faceModel]);
+
   // Load models in screen
   useEffect(() => {
     let active = true;
     const load = async () => {
       try {
+        await prepareTfliteModels();
         const bm = await loadTensorflowModel(BLAZEFACE_FRONT_MODEL, ['android-gpu']);
+        console.log('[QA] BLAZEFACE_LOADED');
         const fm = await loadTensorflowModel(MOBILEFACENET_MODEL, ['android-gpu']);
         if (active) {
           blazeModelRef.current = bm;
           faceModelRef.current = fm;
+          setBlazeModel(bm);
+          setFaceModel(fm);
           setModelsReady(true);
           startScanning();
         }
@@ -176,10 +188,13 @@ export function FaceAuthenticationScreen() {
         console.warn('[FaceAuth] Model load failed, retrying on CPU...', err);
         try {
           const bm = await loadTensorflowModel(BLAZEFACE_FRONT_MODEL, []);
+          console.log('[QA] BLAZEFACE_LOADED');
           const fm = await loadTensorflowModel(MOBILEFACENET_MODEL, []);
           if (active) {
             blazeModelRef.current = bm;
             faceModelRef.current = fm;
+            setBlazeModel(bm);
+            setFaceModel(fm);
             setModelsReady(true);
             startScanning();
           }
@@ -196,13 +211,31 @@ export function FaceAuthenticationScreen() {
 
   // Handle Camera activation delay
   useEffect(() => {
-    if (hasPermission && modelsReady) {
+    if (hasPermission && device != null) {
       const timer = setTimeout(() => setIsCameraActive(true), 200);
       return () => clearTimeout(timer);
     } else {
       setIsCameraActive(false);
     }
-  }, [hasPermission, modelsReady]);
+  }, [hasPermission, device]);
+
+  useEffect(() => {
+    if (hasPermission) {
+      console.log('[QA] CAMERA_PERMISSION_GRANTED');
+    }
+  }, [hasPermission]);
+
+  useEffect(() => {
+    if (device != null) {
+      console.log('[QA] CAMERA_DEVICE_FOUND');
+    }
+  }, [device]);
+
+  useEffect(() => {
+    if (isCameraActive && device != null) {
+      console.log('[QA] CAMERA_COMPONENT_MOUNTED');
+    }
+  }, [isCameraActive, device]);
 
   // Pulse guide animation
   useEffect(() => {
@@ -250,14 +283,10 @@ export function FaceAuthenticationScreen() {
     }
   }, [authState]);
 
-  const device = useMemo(() => {
-    const devs = Camera.getAvailableCameraDevices();
-    return devs.find(d => d.position === settings.cameraPosition) || devs[0];
-  }, [settings.cameraPosition]);
-
   const format = useCameraFormat(device, [
     { videoAspectRatio: windowWidth / windowHeight },
   ]);
+  const shouldMirrorFrame = device?.position === 'front';
 
   const resizePlugin = useMemo(() => {
     try {
@@ -427,6 +456,7 @@ export function FaceAuthenticationScreen() {
       if (blinkDetected) {
         setLivenessBlink(true);
         lastBlinkTimeRef.current = Date.now();
+        console.log('[QA] BLINK_VERIFIED');
       }
     }
 
@@ -436,6 +466,7 @@ export function FaceAuthenticationScreen() {
       if (headMoved) {
         setLivenessHead(true);
         lastHeadMovementTimeRef.current = Date.now();
+        console.log('[QA] HEAD_TURN_VERIFIED');
       }
     }
 
@@ -490,6 +521,8 @@ export function FaceAuthenticationScreen() {
       handleVerificationSuccess(bestScore);
       setStatusText(`✓ Face Verified. Welcome back, ${activeUser.name}`);
       
+      console.log('[QA] AUTH_SUCCESS');
+
       // Log Success Audit Log
       logSecurityEvent('AUTH_SUCCESS', `User ${activeUser.name} verified successfully.`);
 
@@ -515,11 +548,29 @@ export function FaceAuthenticationScreen() {
     }
   }, [activeUser, settings, storedEmbeddings, rollingScores, livenessBlink, livenessHead, lockoutExpiry, sessionActive, authenticatedUser]);
 
+  const logFrameStage = useRunOnJS((stage: string) => {
+    console.log(stage);
+  }, []);
+
+  const logFrameError = useRunOnJS((message: string) => {
+    console.error('[QA] FRAME_PROCESSOR_ERROR', message);
+  }, []);
+
   // Worklet Frame Processor
   const frameProcessor = useFrameProcessor(
     frame => {
       'worklet';
-      if (!modelsReady || !blazeModelRef.current || !faceModelRef.current || !resizePlugin) return;
+      if (!qaFrameReceivedLoggedRef.current) {
+        qaFrameReceivedLoggedRef.current = true;
+        logFrameStage('[QA] FRAME_RECEIVED');
+      }
+      if (!modelsReady || boxedBlazeModel == null || boxedFaceModel == null || !resizePlugin) return;
+      const blazeModel = boxedBlazeModel.unbox();
+      const faceModel = boxedFaceModel.unbox();
+      if (!qaFrameProcessorLoggedRef.current) {
+        qaFrameProcessorLoggedRef.current = true;
+        logFrameStage('[QA] FRAME_PROCESSOR_RUNNING');
+      }
 
       if (workletWarmUpFramesRef.current < 4) {
         workletWarmUpFramesRef.current++;
@@ -532,9 +583,13 @@ export function FaceAuthenticationScreen() {
 
         try {
           const startTime = performance.now();
-          const rotation = rotationForFrame(frame.orientation);
+          const rotation = '0deg';
 
           // 1. Run Face Detection
+          if (!qaBlazeStartLoggedRef.current) {
+            qaBlazeStartLoggedRef.current = true;
+            logFrameStage('[QA] BLAZEFACE_START');
+          }
           const blazeInputWidth = 128;
           const blazeInputHeight = 128;
           const blazePixels = resizePlugin.resize(frame, {
@@ -542,8 +597,15 @@ export function FaceAuthenticationScreen() {
             pixelFormat: 'rgb',
             dataType: 'float32',
           });
-          const blazeBuffer = viewToExactArrayBuffer(blazePixels);
-          const blazeOutputs = blazeModelRef.current.runSync([blazeBuffer]);
+          if (!qaFrameResizeLoggedRef.current) {
+            qaFrameResizeLoggedRef.current = true;
+            logFrameStage('[QA] FRAME_RESIZED');
+          }
+          const blazeOutputs = blazeModel.runSync([blazePixels.buffer]);
+          if (!qaBlazeDoneLoggedRef.current) {
+            qaBlazeDoneLoggedRef.current = true;
+            logFrameStage('[QA] BLAZEFACE_DONE');
+          }
 
           if (blazeOutputs.length < 2) {
             const latency = performance.now() - startTime;
@@ -551,8 +613,8 @@ export function FaceAuthenticationScreen() {
             return;
           }
 
-          const regressors = blazeOutputs[0] as Float32Array;
-          const classificators = blazeOutputs[1] as Float32Array;
+          const regressors = new Float32Array(blazeOutputs[0] as ArrayBuffer);
+          const classificators = new Float32Array(blazeOutputs[1] as ArrayBuffer);
           
           decodeBlazeFaceBoxes(regressors, classificators, blazeAnchors, 0.50);
           
@@ -584,6 +646,10 @@ export function FaceAuthenticationScreen() {
             const latency = performance.now() - startTime;
             handleFrameResult(null, null, null, null, null, 0, latency, false, 0.0);
             return;
+          }
+          if (!qaFaceDetectedLoggedRef.current) {
+            qaFaceDetectedLoggedRef.current = true;
+            logFrameStage('[QA] FACE_DETECTED');
           }
           
           const rawBoxRaw = {
@@ -685,6 +751,10 @@ export function FaceAuthenticationScreen() {
           }
 
           const spoofDetected = cachedSpoofResultRef.current;
+          if (!spoofDetected && !qaAntiSpoofLoggedRef.current) {
+            qaAntiSpoofLoggedRef.current = true;
+            logFrameStage('[QA] ANTI_SPOOF_PASSED');
+          }
 
           // Quality Validation
           const quality = validateFaceQuality(
@@ -718,7 +788,7 @@ export function FaceAuthenticationScreen() {
           }
           
           // Crop and run MobileFaceNet embedding
-          const rawBox = unprocessBox(bestBox, rotation, frame.isMirrored);
+          const rawBox = unprocessBox(bestBox, rotation, shouldMirrorFrame);
           const faceCrop = faceCropForFrame(frame.width, frame.height, rawBox);
           const facePixels = resizePlugin.resize(frame, {
             scale: { width: 112, height: 112 },
@@ -726,8 +796,7 @@ export function FaceAuthenticationScreen() {
             pixelFormat: 'rgb',
             dataType: 'float32',
           });
-          const faceBuffer = viewToExactArrayBuffer(facePixels);
-          const faceOutputs = faceModelRef.current.runSync([faceBuffer]);
+          const faceOutputs = faceModel.runSync([facePixels.buffer]);
           
           if (faceOutputs.length === 0) {
             const latency = performance.now() - startTime;
@@ -735,7 +804,7 @@ export function FaceAuthenticationScreen() {
             return;
           }
           
-          const outputEmbedding = faceOutputs[0] as Float32Array;
+          const outputEmbedding = new Float32Array(faceOutputs[0] as ArrayBuffer);
           const copiedEmbedding = new Float32Array(192);
           copiedEmbedding.set(outputEmbedding);
 
@@ -751,11 +820,12 @@ export function FaceAuthenticationScreen() {
 
           handleFrameResult(bestBox, bestKeypoints, blazePixels, copiedEmbedding, null, validFaceCount, latency, spoofDetected, cachedSpoofConfidenceRef.current);
         } catch (error) {
+          logFrameError(String(error));
           console.warn('Frame processor error:', error);
         }
       });
     },
-    [modelsReady, blazeAnchors, resizePlugin, settings.emulatorMode, activeUser, storedEmbeddings, rollingScores, livenessBlink, livenessHead]
+    [modelsReady, boxedBlazeModel, boxedFaceModel, blazeAnchors, resizePlugin, settings.emulatorMode, activeUser, storedEmbeddings, rollingScores, livenessBlink, livenessHead, shouldMirrorFrame]
   );
 
   const renderBoundingBox = () => {
@@ -998,6 +1068,8 @@ export function FaceAuthenticationScreen() {
           resizeMode="cover"
           pixelFormat="rgb"
           frameProcessor={frameProcessor}
+          onStarted={() => console.log('[QA] CAMERA_PREVIEW_STARTED')}
+          onError={error => console.error('[QA] CAMERA_ERROR', error)}
         />
       )}
 

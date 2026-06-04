@@ -147,7 +147,7 @@ export async function deleteEmbedding(arg: string): Promise<void | boolean> {
       console.log(`[Storage] Deleted embedding file for user: ${arg}`);
       deletedFile = true;
     }
-  } catch (e) {
+  } catch {
     // Ignore file error
   }
 

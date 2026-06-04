@@ -1,4 +1,4 @@
-import { insertQueueItem, getPendingQueueItems } from '../database/attendanceQueueRepository';
+import { insertQueueItem } from '../database/attendanceQueueRepository';
 import { getDatabase } from '../database/database';
 import { AttendanceRecord } from '../api/attendanceApi';
 import Aes from 'react-native-aes-crypto';
@@ -23,7 +23,7 @@ export function uint8ArrayToString(arr: Uint8Array): string {
 async function computeSHA256(text: string): Promise<string> {
   try {
     return await Aes.sha256(text);
-  } catch (error) {
+  } catch {
     // Simple fallback hash for testing
     let hash = 0;
     for (let i = 0; i < text.length; i++) {
@@ -60,7 +60,7 @@ export function validateAttendanceRecord(record: AttendanceRecord): void {
 /**
  * Checks if a record with the same timestamp or hash already exists in the queue or DB to prevent duplicates (CHANGE-19/CHANGE-5)
  */
-async function checkDuplicate(hash: string, timestamp: string): Promise<boolean> {
+async function checkDuplicate(hash: string, _timestamp: string): Promise<boolean> {
   const db = await getDatabase();
   
   // Check in sync_queue table for duplicate hash

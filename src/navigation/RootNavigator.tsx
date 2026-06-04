@@ -5,12 +5,14 @@ import SplashScreen from '../screens/SplashScreen';
 import { AuthNavigator } from './AuthNavigator';
 import { MainNavigator } from './MainNavigator';
 import { FaceAuthenticationScreen } from '../screens/FaceAuthenticationScreen';
+import { FaceRegistrationScreen } from '../screens/FaceRegistrationScreen';
 
 export type RootStackParamList = {
   Splash: undefined;
   Auth: undefined;
   Main: undefined;
   FaceAuthentication: undefined;
+  FaceRegistration: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -23,6 +25,7 @@ export function RootNavigator() {
         <Stack.Screen name="Auth" component={AuthNavigator} />
         <Stack.Screen name="Main" component={MainNavigator} />
         <Stack.Screen name="FaceAuthentication" component={FaceAuthenticationScreen} />
+        <Stack.Screen name="FaceRegistration" component={FaceRegistrationScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

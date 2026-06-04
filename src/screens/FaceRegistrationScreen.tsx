@@ -3,48 +3,36 @@ import {
   StyleSheet,
   Text,
   View,
-  TouchableOpacity,
   TextInput,
   ScrollView,
   Dimensions,
-  ActivityIndicator,
   Alert,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { Camera, useCameraFormat, useCameraPermission, useFrameProcessor } from 'react-native-vision-camera';
-import { useTensorflowModel, loadTensorflowModel } from 'react-native-fast-tflite';
+import { Camera, useCameraDevice, useCameraFormat, useCameraPermission, useFrameProcessor } from 'react-native-vision-camera';
+import { loadTensorflowModel } from 'react-native-fast-tflite';
+import { NitroModules } from 'react-native-nitro-modules';
 import { useRunOnJS } from 'react-native-worklets-core';
-import RNFS from 'react-native-fs';
 import { createResizePlugin } from 'vision-camera-resize-plugin';
 import { AppHeader } from '../components/AppHeader';
-import { PrimaryButton, SecondaryButton } from '../components/PrimaryButton';
+import { PrimaryButton } from '../components/PrimaryButton';
 import { ProgressStepper } from '../components/ProgressStepper';
 import { theme } from '../theme/theme';
 import { createUser, getAllUsers } from '../database/userRepository';
 import { insertEmbedding } from '../database/embeddingRepository';
 import { saveSecuredData } from '../security/secureStorage';
 import { validateFaceQuality } from '../ai/faceQuality';
+import { BLAZEFACE_FRONT_MODEL, MOBILEFACENET_MODEL, prepareTfliteModels } from '../ai/modelSources';
 import {
   generateBlazeFaceAnchors,
   decodeBlazeFaceBoxes,
   faceCropForFrame,
-  rotationForFrame,
   unprocessBox,
-  viewToExactArrayBuffer,
-  boxTfliteModel,
-  readInputSpec,
-  InputSpec,
   NormalizedBox,
   preAllocatedBoxes,
 } from '../utils/frameHelpers';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const BLAZEFACE_FRONT_MODEL = __DEV__
-  ? require('../assets/models/blazeface_front.tflite')
-  : { url: `file://${RNFS.DocumentDirectoryPath}/blazeface_front.tflite` };
-const MOBILEFACENET_MODEL = __DEV__
-  ? require('../assets/models/mobilefacenet.tflite')
-  : { url: `file://${RNFS.DocumentDirectoryPath}/mobilefacenet.tflite` };
 
 export function FaceRegistrationScreen() {
   const navigation = useNavigation<any>();
@@ -56,31 +44,51 @@ export function FaceRegistrationScreen() {
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [detectedBox, setDetectedBox] = useState<NormalizedBox | undefined>();
   const [modelsReady, setModelsReady] = useState(false);
+  const [blazeModel, setBlazeModel] = useState<any>(null);
+  const [faceModel, setFaceModel] = useState<any>(null);
 
   const blazeModelRef = useRef<any>(null);
   const faceModelRef = useRef<any>(null);
   const latestEmbeddingRef = useRef<Float32Array | null>(null);
+
+  const qaFrameReceivedLoggedRef = useRef(false);
+  const qaFrameProcessorLoggedRef = useRef(false);
+  const qaFrameResizeLoggedRef = useRef(false);
+  const qaBlazeStartLoggedRef = useRef(false);
+  const qaBlazeDoneLoggedRef = useRef(false);
+  const qaFaceDetectedLoggedRef = useRef(false);
+
+  const device = useCameraDevice('front');
+  const boxedBlazeModel = useMemo(() => (blazeModel != null ? NitroModules.box(blazeModel) : undefined), [blazeModel]);
+  const boxedFaceModel = useMemo(() => (faceModel != null ? NitroModules.box(faceModel) : undefined), [faceModel]);
 
   // Load models in screen
   useEffect(() => {
     let active = true;
     const load = async () => {
       try {
+        await prepareTfliteModels();
         const bm = await loadTensorflowModel(BLAZEFACE_FRONT_MODEL, ['android-gpu']);
+        console.log('[QA] BLAZEFACE_LOADED');
         const fm = await loadTensorflowModel(MOBILEFACENET_MODEL, ['android-gpu']);
         if (active) {
           blazeModelRef.current = bm;
           faceModelRef.current = fm;
+          setBlazeModel(bm);
+          setFaceModel(fm);
           setModelsReady(true);
         }
       } catch (err) {
         console.warn('[Register] Model load failed, retrying on CPU...', err);
         try {
           const bm = await loadTensorflowModel(BLAZEFACE_FRONT_MODEL, []);
+          console.log('[QA] BLAZEFACE_LOADED');
           const fm = await loadTensorflowModel(MOBILEFACENET_MODEL, []);
           if (active) {
             blazeModelRef.current = bm;
             faceModelRef.current = fm;
+            setBlazeModel(bm);
+            setFaceModel(fm);
             setModelsReady(true);
           }
         } catch (e) {
@@ -98,18 +106,31 @@ export function FaceRegistrationScreen() {
 
   // Handle Camera activation delay
   useEffect(() => {
-    if (step === 3 && hasPermission && modelsReady) {
+    if (step === 3 && hasPermission && device != null) {
       const timer = setTimeout(() => setIsCameraActive(true), 200);
       return () => clearTimeout(timer);
     } else {
       setIsCameraActive(false);
     }
-  }, [step, hasPermission, modelsReady]);
+  }, [step, hasPermission, device]);
 
-  const device = useMemo(() => {
-    const devs = Camera.getAvailableCameraDevices();
-    return devs.find(d => d.position === 'front') || devs[0];
-  }, []);
+  useEffect(() => {
+    if (hasPermission) {
+      console.log('[QA] CAMERA_PERMISSION_GRANTED');
+    }
+  }, [hasPermission]);
+
+  useEffect(() => {
+    if (device != null) {
+      console.log('[QA] CAMERA_DEVICE_FOUND');
+    }
+  }, [device]);
+
+  useEffect(() => {
+    if (isCameraActive && device != null) {
+      console.log('[QA] CAMERA_COMPONENT_MOUNTED');
+    }
+  }, [isCameraActive, device]);
 
   const format = useCameraFormat(device, [
     { videoAspectRatio: SCREEN_WIDTH / Dimensions.get('window').height },
@@ -134,28 +155,68 @@ export function FaceRegistrationScreen() {
     setStatus(feedback);
   }, []);
 
+  const logFrameStage = useRunOnJS((stage: string) => {
+    console.log(stage);
+  }, []);
+
+  const logFrameError = useRunOnJS((message: string) => {
+    console.error('[QA] FRAME_PROCESSOR_ERROR', message);
+  }, []);
+
   const frameProcessor = useFrameProcessor(
     (frame) => {
       'worklet';
-      if (!blazeModelRef.current || !faceModelRef.current || !resizePlugin) return;
+      if (!qaFrameReceivedLoggedRef.current) {
+        qaFrameReceivedLoggedRef.current = true;
+        logFrameStage('[QA] FRAME_RECEIVED');
+      }
+      if (!modelsReady || boxedBlazeModel == null || boxedFaceModel == null || !resizePlugin) return;
+      const blazeModel = boxedBlazeModel.unbox();
+      const faceModel = boxedFaceModel.unbox();
+      if (!qaFrameProcessorLoggedRef.current) {
+        qaFrameProcessorLoggedRef.current = true;
+        logFrameStage('[QA] FRAME_PROCESSOR_RUNNING');
+      }
 
-      const rotation = rotationForFrame(frame.orientation);
+      const rotation = '0deg';
       
       // 1. Run Face Detection (BlazeFace)
+      if (!qaBlazeStartLoggedRef.current) {
+        qaBlazeStartLoggedRef.current = true;
+        logFrameStage('[QA] BLAZEFACE_START');
+      }
       const detectionBuffer = resizePlugin.resize(frame, {
         scale: { width: 128, height: 128 },
         pixelFormat: 'rgb',
         dataType: 'float32',
       });
-      const detectionOutput = blazeModelRef.current.runSync([detectionBuffer]);
-      const regressors = detectionOutput[0] as Float32Array;
-      const classificators = detectionOutput[1] as Float32Array;
+      if (!qaFrameResizeLoggedRef.current) {
+        qaFrameResizeLoggedRef.current = true;
+        logFrameStage('[QA] FRAME_RESIZED');
+      }
+      let detectionOutput: ArrayBuffer[];
+      try {
+        detectionOutput = blazeModel.runSync([detectionBuffer.buffer]);
+      } catch (error) {
+        logFrameError(String(error));
+        return;
+      }
+      if (!qaBlazeDoneLoggedRef.current) {
+        qaBlazeDoneLoggedRef.current = true;
+        logFrameStage('[QA] BLAZEFACE_DONE');
+      }
+      const regressors = new Float32Array(detectionOutput[0] as ArrayBuffer);
+      const classificators = new Float32Array(detectionOutput[1] as ArrayBuffer);
 
       const numFaces = decodeBlazeFaceBoxes(regressors, classificators, blazeAnchors, 0.50);
       
       if (numFaces === 0) {
         handleFrameResult(undefined, null, 'No face detected. Align face inside the guide.');
         return;
+      }
+      if (!qaFaceDetectedLoggedRef.current) {
+        qaFaceDetectedLoggedRef.current = true;
+        logFrameStage('[QA] FACE_DETECTED');
       }
 
       // Read best face box
@@ -211,15 +272,21 @@ export function FaceRegistrationScreen() {
         pixelFormat: 'rgb',
         dataType: 'float32',
       });
-      const faceOutput = faceModelRef.current.runSync([faceBuffer]);
-      const outputEmbedding = faceOutput[0] as Float32Array;
+      let faceOutput: ArrayBuffer[];
+      try {
+        faceOutput = faceModel.runSync([faceBuffer.buffer]);
+      } catch (error) {
+        logFrameError(String(error));
+        return;
+      }
+      const outputEmbedding = new Float32Array(faceOutput[0] as ArrayBuffer);
 
       const copiedEmbedding = new Float32Array(192);
       copiedEmbedding.set(outputEmbedding);
 
       handleFrameResult(unprocBox, copiedEmbedding, 'Face matched! Complete enrollment.');
     },
-    [blazeAnchors, resizePlugin, modelsReady]
+    [blazeAnchors, resizePlugin, modelsReady, boxedBlazeModel, boxedFaceModel]
   );
 
   const handleRegister = async () => {
@@ -241,10 +308,15 @@ export function FaceRegistrationScreen() {
       
       if (!userId) {
         userId = await createUser(name);
+        console.log('[QA] USER_CREATED');
       }
       
       await insertEmbedding(userId, currentEmbedding, 'MobileFaceNet_v1');
+      console.log('[QA] EMBEDDING_CREATED');
+      await saveSecuredData('active_user_name', name);
+      console.log('[QA] PROFILE_ACTIVATED');
       await saveSecuredData('setting_onboardingCompleted', 'true');
+      console.log('[QA] AUTH_ENABLED');
       
       Alert.alert('Success', `Biometric face profile registered for ${name}!`, [
         {
@@ -255,7 +327,7 @@ export function FaceRegistrationScreen() {
           },
         },
       ]);
-    } catch (err) {
+    } catch {
       Alert.alert('Enrollment Error', 'Failed to save biometric profile.');
     }
   };
@@ -356,6 +428,8 @@ export function FaceRegistrationScreen() {
               format={format}
               pixelFormat="rgb"
               frameProcessor={frameProcessor}
+              onStarted={() => console.log('[QA] CAMERA_PREVIEW_STARTED')}
+              onError={error => console.error('[QA] CAMERA_ERROR', error)}
             />
           )}
           <View style={styles.cameraOverlay}>

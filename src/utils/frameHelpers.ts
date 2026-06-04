@@ -1,8 +1,7 @@
-import { Platform, Dimensions } from 'react-native';
+import { Platform } from 'react-native';
 import { type BoxedHybridObject } from 'react-native-nitro-modules';
 import { type TfliteModel, type Tensor } from 'react-native-fast-tflite';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const MAX_DETECTED_FACES = 5;
 
 export type InputSpec = {

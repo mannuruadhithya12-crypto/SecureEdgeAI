@@ -1,5 +1,5 @@
 import { authenticateFace } from './authenticateFace';
-import { getSecuredData, saveSecuredData } from '../security/secureStorage';
+import { saveSecuredData } from '../security/secureStorage';
 
 export { authenticateFace };
 

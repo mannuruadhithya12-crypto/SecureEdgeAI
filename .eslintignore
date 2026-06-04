@@ -1,0 +1,6 @@
+tf-env/
+node_modules/
+android/
+ios/
+**/node_modules/
+**/tf-env/

@@ -1,9 +1,9 @@
 import React, { useEffect, useRef } from 'react';
 import { StyleSheet, Text, View, ActivityIndicator, StatusBar, Animated } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import RNFS from 'react-native-fs';
-import { initDB, seedAndVerifyDB } from '../database/database';
+import { initDB } from '../database/database';
 import { getSecuredData } from '../security/secureStorage';
+import { prepareTfliteModels } from '../ai/modelSources';
 import { theme } from '../theme/theme';
 
 export function SplashScreen() {
@@ -25,33 +25,10 @@ export function SplashScreen() {
       }),
     ]).start();
 
-    const prepareTfliteModelsAssets = async () => {
-      try {
-        const blazePath = `${RNFS.DocumentDirectoryPath}/blazeface_front.tflite`;
-        const facenetPath = `${RNFS.DocumentDirectoryPath}/mobilefacenet.tflite`;
-        
-        const blazeExists = await RNFS.exists(blazePath);
-        if (!blazeExists) {
-          console.log('[Splash] Copying blazeface_front.tflite from assets...');
-          await RNFS.copyFileAssets('blazeface_front.tflite', blazePath);
-        }
-        
-        const facenetExists = await RNFS.exists(facenetPath);
-        if (!facenetExists) {
-          console.log('[Splash] Copying mobilefacenet.tflite from assets...');
-          await RNFS.copyFileAssets('mobilefacenet.tflite', facenetPath);
-        }
-        console.log('[Splash] Local TFLite assets prepared successfully.');
-      } catch (error) {
-        console.error('[Splash] Error preparing local assets:', error);
-      }
-    };
-
     const setupAndNavigate = async () => {
       try {
         await initDB();
-        await seedAndVerifyDB();
-        await prepareTfliteModelsAssets();
+        await prepareTfliteModels();
       } catch (err) {
         console.warn('[Splash] DB setup warning:', err);
       }
@@ -64,13 +41,13 @@ export function SplashScreen() {
           } else {
             navigation.replace('Auth');
           }
-        } catch (e) {
+        } catch {
           navigation.replace('Auth');
         }
       }, 2000);
     };
     setupAndNavigate();
-  }, [navigation]);
+  }, [navigation, scaleAnim, opacityAnim]);
 
   return (
     <View style={styles.container}>
