@@ -1,38 +1,105 @@
-import React, { useEffect } from 'react';
-import { StyleSheet, Text, View, ActivityIndicator, StatusBar, Image } from 'react-native';
+import React, { useEffect, useRef } from 'react';
+import { StyleSheet, Text, View, ActivityIndicator, StatusBar, Animated } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import RNFS from 'react-native-fs';
 import { initDB, seedAndVerifyDB } from '../database/database';
+import { getSecuredData } from '../security/secureStorage';
+import { theme } from '../theme/theme';
 
-export default function SplashScreen({ navigation }: any) {
+export function SplashScreen() {
+  const navigation = useNavigation<any>();
+  const scaleAnim = useRef(new Animated.Value(0.92)).current;
+  const opacityAnim = useRef(new Animated.Value(0)).current;
+
   useEffect(() => {
+    Animated.parallel([
+      Animated.spring(scaleAnim, {
+        toValue: 1,
+        friction: 6,
+        useNativeDriver: true,
+      }),
+      Animated.timing(opacityAnim, {
+        toValue: 1,
+        duration: 800,
+        useNativeDriver: true,
+      }),
+    ]).start();
+
+    const prepareTfliteModelsAssets = async () => {
+      try {
+        const blazePath = `${RNFS.DocumentDirectoryPath}/blazeface_front.tflite`;
+        const facenetPath = `${RNFS.DocumentDirectoryPath}/mobilefacenet.tflite`;
+        
+        const blazeExists = await RNFS.exists(blazePath);
+        if (!blazeExists) {
+          console.log('[Splash] Copying blazeface_front.tflite from assets...');
+          await RNFS.copyFileAssets('blazeface_front.tflite', blazePath);
+        }
+        
+        const facenetExists = await RNFS.exists(facenetPath);
+        if (!facenetExists) {
+          console.log('[Splash] Copying mobilefacenet.tflite from assets...');
+          await RNFS.copyFileAssets('mobilefacenet.tflite', facenetPath);
+        }
+        console.log('[Splash] Local TFLite assets prepared successfully.');
+      } catch (error) {
+        console.error('[Splash] Error preparing local assets:', error);
+      }
+    };
+
     const setupAndNavigate = async () => {
-      // Initialize the local database
-      await initDB();
+      try {
+        await initDB();
+        await seedAndVerifyDB();
+        await prepareTfliteModelsAssets();
+      } catch (err) {
+        console.warn('[Splash] DB setup warning:', err);
+      }
       
-      // Seed and verify database content to the console log
-      await seedAndVerifyDB();
-      
-      // Keep splash visible for 2 seconds for a premium feel
-      setTimeout(() => {
-        navigation.replace('Login');
+      setTimeout(async () => {
+        try {
+          const onboard = await getSecuredData('setting_onboardingCompleted');
+          if (onboard === 'true') {
+            navigation.replace('Main');
+          } else {
+            navigation.replace('Auth');
+          }
+        } catch (e) {
+          navigation.replace('Auth');
+        }
       }, 2000);
     };
-    
     setupAndNavigate();
   }, [navigation]);
 
   return (
     <View style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor="#0a0a0f" />
-      <View style={styles.logoContainer}>
+      <StatusBar barStyle="light-content" backgroundColor={theme.colors.background} />
+      
+      <Animated.View 
+        style={[
+          styles.logoContainer, 
+          { 
+            opacity: opacityAnim,
+            transform: [{ scale: scaleAnim }]
+          }
+        ]}
+      >
         <View style={styles.logoCircle}>
           <Text style={styles.logoText}>🛡️</Text>
+          <View style={styles.faceOverlay}>
+            <Text style={styles.faceText}>👤</Text>
+          </View>
         </View>
-        <Text style={styles.title}>SecureEdgeAI</Text>
-        <Text style={styles.subtitle}>Offline Facial Recognition Engine</Text>
-      </View>
+        <Text style={styles.title}>SecureEdge</Text>
+        <Text style={styles.titleSuffix}>MOBILE</Text>
+        <Text style={styles.subtitle}>AI Powered Face Authentication</Text>
+      </Animated.View>
+
       <View style={styles.loaderContainer}>
-        <ActivityIndicator size="small" color="#6366f1" />
-        <Text style={styles.loadingText}>Loading local AI models...</Text>
+        <ActivityIndicator size="small" color={theme.colors.primary} />
+        <Text style={styles.loadingText}>Initializing local security audits...</Text>
+        <Text style={styles.footerText}>Secure. Offline. Reliable.</Text>
       </View>
     </View>
   );
@@ -41,10 +108,10 @@ export default function SplashScreen({ navigation }: any) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0a0a0f',
+    backgroundColor: theme.colors.background,
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 60,
+    paddingVertical: theme.spacing.xxl * 2,
   },
   logoContainer: {
     flex: 1,
@@ -52,39 +119,73 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   logoCircle: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    backgroundColor: 'rgba(99, 102, 241, 0.1)',
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: 'rgba(37, 99, 235, 0.08)',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: 'rgba(99, 102, 241, 0.3)',
+    marginBottom: theme.spacing.xl,
+    borderWidth: 1.5,
+    borderColor: 'rgba(37, 99, 235, 0.25)',
+    shadowColor: theme.colors.primary,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.15,
+    shadowRadius: 16,
+    elevation: 8,
+    position: 'relative',
   },
   logoText: {
-    fontSize: 50,
+    fontSize: 54,
+  },
+  faceOverlay: {
+    position: 'absolute',
+    opacity: 0.75,
+  },
+  faceText: {
+    fontSize: 24,
+    color: theme.colors.primary,
+    fontWeight: 'bold',
   },
   title: {
-    color: '#ffffff',
-    fontSize: 32,
+    color: theme.colors.text,
+    fontSize: 34,
     fontWeight: '800',
     letterSpacing: 0.5,
   },
-  subtitle: {
-    color: '#6366f1',
-    fontSize: 14,
-    fontWeight: '600',
+  titleSuffix: {
+    color: theme.colors.primary,
+    fontSize: theme.typography.fontSize.md,
+    fontWeight: '800',
+    letterSpacing: 4,
+    marginTop: 2,
     textTransform: 'uppercase',
-    letterSpacing: 1.5,
-    marginTop: 6,
+  },
+  subtitle: {
+    color: theme.colors.textMuted,
+    fontSize: theme.typography.fontSize.md,
+    fontWeight: '600',
+    letterSpacing: 0.5,
+    marginTop: theme.spacing.md,
   },
   loaderContainer: {
     alignItems: 'center',
+    gap: 8,
   },
   loadingText: {
-    color: '#52525b',
-    fontSize: 12,
-    marginTop: 10,
+    color: theme.colors.textMuted,
+    fontSize: theme.typography.fontSize.sm,
+    marginTop: theme.spacing.sm,
+    fontWeight: '500',
+  },
+  footerText: {
+    color: 'rgba(255, 255, 255, 0.22)',
+    fontSize: 10,
+    fontWeight: '600',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+    marginTop: theme.spacing.xs,
   },
 });
+
+export default SplashScreen;

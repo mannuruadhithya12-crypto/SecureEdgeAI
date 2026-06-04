@@ -1,4 +1,5 @@
 import { getDatabase } from './database';
+import { encryptData, decryptData } from '../security/encryption';
 
 export interface User {
   id: number;
@@ -8,10 +9,11 @@ export interface User {
 
 export async function createUser(name: string): Promise<number> {
   const db = await getDatabase();
+  const encryptedName = await encryptData(name);
   const createdAt = new Date().toISOString().split('T')[0];
   const result = await db.executeSql(
     'INSERT INTO users (name, created_at) VALUES (?, ?);',
-    [name, createdAt]
+    [encryptedName, createdAt]
   );
   
   if (result && result.length > 0) {
@@ -22,15 +24,27 @@ export async function createUser(name: string): Promise<number> {
 
 export async function getAllUsers(): Promise<User[]> {
   const db = await getDatabase();
-  const result = await db.executeSql('SELECT * FROM users ORDER BY name ASC;');
+  const result = await db.executeSql('SELECT * FROM users;');
   const users: User[] = [];
   
   if (result && result.length > 0) {
     const rows = result[0].rows;
     for (let i = 0; i < rows.length; i++) {
-      users.push(rows.item(i) as User);
+      const row = rows.item(i);
+      try {
+        const decryptedName = await decryptData(row.name);
+        users.push({
+          id: row.id,
+          name: decryptedName,
+          created_at: row.created_at
+        });
+      } catch (e) {
+        users.push(row);
+      }
     }
   }
+  // Sort in JS because encrypted sorting is not lexicographically alphabetical
+  users.sort((a, b) => a.name.localeCompare(b.name));
   return users;
 }
 
@@ -44,5 +58,6 @@ export async function deleteUser(id: number): Promise<void> {
 
 export async function renameUser(id: number, newName: string): Promise<void> {
   const db = await getDatabase();
-  await db.executeSql('UPDATE users SET name = ? WHERE id = ?;', [newName, id]);
+  const encryptedName = await encryptData(newName);
+  await db.executeSql('UPDATE users SET name = ? WHERE id = ?;', [encryptedName, id]);
 }

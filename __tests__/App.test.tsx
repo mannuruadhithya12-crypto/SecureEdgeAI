@@ -67,10 +67,16 @@ jest.mock('vision-camera-resize-plugin', () => {
 
 // Mock react-native-safe-area-context
 jest.mock('react-native-safe-area-context', () => {
+  const React = require('react');
+  const initialFilters = { top: 0, bottom: 0, left: 0, right: 0 };
+  const initialFrame = { x: 0, y: 0, width: 0, height: 0 };
   return {
     SafeAreaProvider: ({ children }: any) => children,
     SafeAreaView: ({ children }: any) => children,
-    useSafeAreaInsets: jest.fn(() => ({ top: 0, bottom: 0, left: 0, right: 0 })),
+    useSafeAreaInsets: jest.fn(() => initialFilters),
+    useSafeAreaFrame: jest.fn(() => initialFrame),
+    SafeAreaInsetsContext: React.createContext(initialFilters),
+    SafeAreaFrameContext: React.createContext(initialFrame),
   };
 });
 
@@ -79,7 +85,7 @@ jest.mock('react-native-sqlite-storage', () => {
   return {
     enablePromise: jest.fn(),
     openDatabase: jest.fn(() => Promise.resolve({
-      executeSql: jest.fn(() => Promise.resolve([])),
+      executeSql: jest.fn(() => Promise.resolve([{ rows: { length: 0, item: () => null } }])),
       transaction: jest.fn((cb) => {
         const tx = { executeSql: jest.fn() };
         cb(tx);
@@ -89,20 +95,6 @@ jest.mock('react-native-sqlite-storage', () => {
   };
 });
 
-// Mock react-native-sqlcipher-storage
-jest.mock('react-native-sqlcipher-storage', () => {
-  return {
-    enablePromise: jest.fn(),
-    openDatabase: jest.fn(() => Promise.resolve({
-      executeSql: jest.fn(() => Promise.resolve([])),
-      transaction: jest.fn((cb) => {
-        const tx = { executeSql: jest.fn() };
-        cb(tx);
-        return Promise.resolve();
-      })
-    }))
-  };
-});
 
 // Mock react-native-fs
 jest.mock('react-native-fs', () => {

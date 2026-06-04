@@ -26,12 +26,12 @@ interface Settings {
 interface SettingsScreenProps {
   settings: Settings;
   updateSetting: (key: keyof Settings, value: any) => Promise<boolean>;
-  handleBackup: () => Promise<void>;
-  handleRestore: () => Promise<void>;
-  handleClearAll: () => Promise<void>;
-  handleResetSettings: () => Promise<void>;
-  onClose: () => void;
-  statusMessage: string;
+  handleBackup: () => Promise<any>;
+  handleRestore: () => Promise<any>;
+  handleClearAll: () => Promise<any>;
+  handleResetSettings: () => Promise<any>;
+  onClose?: () => void;
+  statusMessage?: string;
 }
 
 export function SettingsScreen({

@@ -73,6 +73,11 @@ def enableProguardInReleaseBuilds = true
 def jscFlavor = 'io.github.react-native-community:jsc-android:2026004.+'
 
 android {
+    externalNativeBuild {
+        cmake {
+            buildStagingDirectory = "${project.rootDir}/../cxx"
+        }
+    }
     ndkVersion rootProject.ext.ndkVersion
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
@@ -84,6 +89,9 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0"
+        ndk {
+            abiFilters "arm64-v8a"
+        }
     }
     splits {
         abi {
@@ -115,6 +123,14 @@ android {
             ndk {
                 debugSymbolLevel 'NONE'
             }
+        }
+    }
+    splits {
+        abi {
+            enable true
+            reset()
+            include "arm64-v8a"
+            universalApk true
         }
     }
     packagingOptions {
