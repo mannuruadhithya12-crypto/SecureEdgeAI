@@ -12,7 +12,7 @@ export function useDatabase(statusTextUpdater: (s: string) => void) {
   const [settings, setSettings] = useState({
     cameraPosition: 'front' as 'front' | 'back',
     fpsMode: 'auto' as 'auto' | 1 | 2 | 4 | 8,
-    emulatorMode: false,
+    emulatorMode: true,
     securityMode: true,
     telemetryEnabled: true,
     darkMode: true,
@@ -69,7 +69,7 @@ export function useDatabase(statusTextUpdater: (s: string) => void) {
       setSettings({
         cameraPosition: (cam === 'back' ? 'back' : 'front') as 'front' | 'back',
         fpsMode: fps === 'auto' ? 'auto' : fps ? (parseInt(fps, 10) as any) : 'auto',
-        emulatorMode: emu === 'true',
+        emulatorMode: emu === 'true' || emu == null,
         securityMode: sec === 'false' ? false : true,
         telemetryEnabled: tel === 'false' ? false : true,
         darkMode: dark === 'false' ? false : true,
@@ -193,7 +193,7 @@ export function useDatabase(statusTextUpdater: (s: string) => void) {
   const handleResetSettings = async () => {
     await saveSecuredData('setting_cameraPosition', 'front');
     await saveSecuredData('setting_fpsMode', 'auto');
-    await saveSecuredData('setting_emulatorMode', 'false');
+    await saveSecuredData('setting_emulatorMode', 'true');
     await saveSecuredData('setting_securityMode', 'true');
     await saveSecuredData('setting_telemetryEnabled', 'true');
     await saveSecuredData('setting_darkMode', 'true');

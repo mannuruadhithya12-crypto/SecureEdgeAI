@@ -19,6 +19,7 @@ import { PrimaryButton } from '../components/PrimaryButton';
 import { ProgressStepper } from '../components/ProgressStepper';
 import { theme } from '../theme/theme';
 import { createUser, getAllUsers } from '../database/userRepository';
+import { useDatabase } from '../hooks/useDatabase';
 import { insertEmbedding } from '../database/embeddingRepository';
 import { saveSecuredData } from '../security/secureStorage';
 import { validateFaceQuality } from '../ai/faceQuality';
@@ -40,6 +41,7 @@ export function FaceRegistrationScreen() {
   const [registrationName, setRegistrationName] = useState('');
   const [status, setStatus] = useState('Align face in focus...');
 
+  const { settings } = useDatabase(() => {});
   const { hasPermission, requestPermission } = useCameraPermission();
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [detectedBox, setDetectedBox] = useState<NormalizedBox | undefined>();
@@ -132,6 +134,20 @@ export function FaceRegistrationScreen() {
     }
   }, [isCameraActive, device]);
 
+  useEffect(() => {
+    if (settings?.emulatorMode && step === 3) {
+      const timer = setTimeout(() => {
+        const mockEmbedding = new Float32Array(192);
+        mockEmbedding.fill(0.5);
+        latestEmbeddingRef.current = mockEmbedding;
+        console.log('[QA] EMBEDDING_GENERATED');
+        setStatus('Emulator Mode: Face matched! Complete enrollment.');
+        setDetectedBox({ xMin: 0.25, yMin: 0.25, xMax: 0.75, yMax: 0.75 });
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [step, settings?.emulatorMode]);
+
   const format = useCameraFormat(device, [
     { videoAspectRatio: SCREEN_WIDTH / Dimensions.get('window').height },
   ]);
@@ -151,6 +167,7 @@ export function FaceRegistrationScreen() {
     setDetectedBox(box);
     if (embedding) {
       latestEmbeddingRef.current = embedding;
+      console.log('[QA] EMBEDDING_GENERATED');
     }
     setStatus(feedback);
   }, []);

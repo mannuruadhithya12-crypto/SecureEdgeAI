@@ -23,9 +23,15 @@ async function copyAndroidRawModel(resourceNames: string[], destinationPath: str
   let lastError: unknown = null;
   for (const resourceName of resourceNames) {
     try {
-      await RNFS.copyFileRes(resourceName, destinationPath);
-      console.log(`[QA] MODEL_RESOURCE_COPIED ${resourceName}`);
-      return;
+      try {
+        await RNFS.copyFileAssets(resourceName, destinationPath);
+        console.log(`[QA] MODEL_RESOURCE_COPIED ${resourceName}`);
+        return;
+      } catch {
+        await RNFS.copyFileRes(resourceName, destinationPath);
+        console.log(`[QA] MODEL_RESOURCE_COPIED ${resourceName}`);
+        return;
+      }
     } catch (error) {
       lastError = error;
     }
