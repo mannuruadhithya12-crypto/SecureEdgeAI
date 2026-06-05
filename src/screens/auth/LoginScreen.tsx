@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, Alert } from 'react-native';
+import { StyleSheet, Text, View, TextInput, ScrollView, Alert, TouchableOpacity, StatusBar } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { useDatabase } from '../hooks/useDatabase';
-import { AppHeader } from '../components/AppHeader';
-import { PrimaryButton, SecondaryButton } from '../components/PrimaryButton';
-import { theme } from '../theme/theme';
+import { useDatabase } from '../../hooks/useDatabase';
+import { AppHeader } from '../../components/AppHeader';
+import { PrimaryButton, SecondaryButton } from '../../components/PrimaryButton';
+import { theme } from '../../theme/theme';
+import { getSecuredData, saveSecuredData } from '../../security/secureStorage';
 
 export function LoginScreen() {
   const navigation = useNavigation<any>();
@@ -13,33 +14,80 @@ export function LoginScreen() {
   const [usernameInput, setUsernameInput] = useState('');
   const [passwordInput, setPasswordInput] = useState('');
   const [rememberMe, setRememberMe] = useState(true);
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
 
   useEffect(() => {
+    console.log('[QA] LOGIN_SCREEN_LOADED');
     loadAll();
   }, []);
 
-  const handlePassLogin = () => {
-    const query = usernameInput.trim();
+  const handlePassLogin = async () => {
+    const query = usernameInput.trim().toLowerCase();
+    const pass = passwordInput;
+
     if (!query) {
-      Alert.alert('Validation Error', 'Please enter your Username / Employee ID.');
+      Alert.alert('Validation Error', 'Please enter your Username or Employee ID.');
       return;
     }
-    
-    const matched = usersList.find(
-      u => u.name.toLowerCase() === query.toLowerCase() || `EMP00${u.id}` === query.toUpperCase()
-    );
-    
-    if (matched) {
-      handleSwitchUser(matched);
-      // Simulating successful session login
-      const { saveSecuredData } = require('../security/secureStorage');
-      saveSecuredData('active_user_name', matched.name);
-      navigation.replace('Main');
-    } else {
-      Alert.alert(
-        'Login Failed',
-        'Username / Employee ID not found locally. Please verify spelling or log in with face recognition.'
+
+    if (!pass) {
+      Alert.alert('Validation Error', 'Please enter your password.');
+      return;
+    }
+
+    setIsLoggingIn(true);
+    console.log(`[QA] LOGIN_USERNAME ${query}`);
+
+    try {
+      // FIX ISSUE 1: Always fetch fresh users from DB at login time.
+      // Do NOT rely on stale usersList state which may be empty on first render.
+      const { getAllUsers } = require('../../database/userRepository');
+      const freshUsers = await getAllUsers();
+      console.log(`[QA] USERS_COUNT ${freshUsers.length}`);
+
+      // Match by username (name) or employee ID (EMP00<id> format)
+      const matched = freshUsers.find(
+        (u: any) =>
+          u.name.toLowerCase() === query ||
+          (u.employee_id && u.employee_id.toLowerCase() === query) ||
+          ('emp00' + u.id) === query
       );
+
+      if (!matched) {
+        setIsLoggingIn(false);
+        console.log('[QA] LOGIN_USER_NOT_FOUND');
+        Alert.alert(
+          'Login Failed',
+          'Username or Employee ID not found locally. Please register first.'
+        );
+        return;
+      }
+
+      console.log(`[QA] STORED_USERNAME ${matched.name}`);
+
+      // FIX ISSUE 1: Retrieve password using the STORED username (post-decryption),
+      // not the raw input. Registration saves under username.toLowerCase().
+      const storedPasswordKey = `password_${matched.name.toLowerCase()}`;
+      const correctPassword = await getSecuredData(storedPasswordKey);
+
+      console.log(`[QA] PASSWORD_COMPARISON_RESULT ${pass === correctPassword ? 'MATCH' : 'MISMATCH'}`);
+
+      if (pass === correctPassword) {
+        // Activate this user's profile
+        await saveSecuredData('active_user_name', matched.name);
+        handleSwitchUser(matched);
+        console.log('[QA] PASSWORD_LOGIN_SUCCESS');
+        console.log(`[QA] ACTIVE_PROFILE_UPDATED ${matched.name}`);
+        setIsLoggingIn(false);
+        navigation.replace('Main');
+      } else {
+        setIsLoggingIn(false);
+        Alert.alert('Login Failed', 'Incorrect password. Please try again.');
+      }
+    } catch (err) {
+      setIsLoggingIn(false);
+      console.error('[QA] LOGIN_ERROR', err);
+      Alert.alert('System Error', 'Failed to retrieve secure credentials.');
     }
   };
 
@@ -50,7 +98,7 @@ export function LoginScreen() {
         'No enrolled biometric profiles exist on this device. Please register a face profile first.',
         [
           { text: 'Cancel', style: 'cancel' },
-          { text: 'Register Now', onPress: () => navigation.navigate('FaceRegistration') }
+          { text: 'Register Now', onPress: () => navigation.navigate('Step1PersonalInfo') }
         ]
       );
       return;
@@ -61,7 +109,9 @@ export function LoginScreen() {
 
   return (
     <View style={styles.container}>
+      <StatusBar barStyle="light-content" backgroundColor="#0F172A" />
       <AppHeader title="SecureEdge" />
+      
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <View style={styles.logoBadgeContainer}>
           <View style={styles.logoBadgeOuter}>
@@ -71,13 +121,13 @@ export function LoginScreen() {
             </View>
           </View>
           <Text style={styles.logoBadgeTitle}>SecureEdgeMobile</Text>
-          <Text style={styles.logoBadgeSubtitle}>Offline Face Authentication App</Text>
+          <Text style={styles.logoBadgeSubtitle}>Offline Biometric Trust Terminal</Text>
           <Text style={styles.logoBadgeDetail}>Secure • Fast • Offline • AI Powered</Text>
         </View>
 
         <View style={styles.card}>
           <Text style={styles.cardHeaderTitle}>Welcome Back</Text>
-          <Text style={styles.cardHeaderSubtitle}>Please login to continue</Text>
+          <Text style={styles.cardHeaderSubtitle}>Log in using password or face authentication</Text>
 
           <View style={styles.formInputContainer}>
             <Text style={styles.formInputLabel}>Username / Employee ID</Text>
@@ -102,6 +152,7 @@ export function LoginScreen() {
               onChangeText={setPasswordInput}
               secureTextEntry
               autoCapitalize="none"
+              autoCorrect={false}
             />
           </View>
 
@@ -114,14 +165,15 @@ export function LoginScreen() {
               <Text style={styles.checkboxEmoji}>{rememberMe ? '☑️' : '⬜'}</Text>
               <Text style={styles.rememberText}>Remember me</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => Alert.alert('Information', 'Offline passwords can be configured under Settings.')}>
+            <TouchableOpacity onPress={() => Alert.alert('Information', 'Offline credentials can be managed in secure settings.')}>
               <Text style={styles.forgotText}>Forgot Password?</Text>
             </TouchableOpacity>
           </View>
 
           <PrimaryButton
-            title="Login"
+            title={isLoggingIn ? "Logging in..." : "Login"}
             onPress={handlePassLogin}
+            disabled={isLoggingIn}
             style={{ marginTop: 8 }}
           />
 
@@ -135,16 +187,16 @@ export function LoginScreen() {
             title="Login with Face"
             onPress={handleFaceLoginTrigger}
             icon="👤"
-            style={{ borderColor: theme.colors.primary, borderWidth: 1 }}
-            textStyle={{ color: theme.colors.text }}
+            style={{ borderColor: '#2563EB', borderWidth: 1 }}
+            textStyle={{ color: '#F8FAFC' }}
           />
         </View>
 
         <View style={styles.loginRegisterLinkContainer}>
           <Text style={styles.loginRegisterText}>New Employee? </Text>
-          <TouchableOpacity onPress={() => navigation.navigate('FaceRegistration')}>
-            <Text style={[styles.loginRegisterText, { color: theme.colors.primary, fontWeight: '700' }]}>
-              Register Face Biometrics
+          <TouchableOpacity onPress={() => navigation.navigate('Welcome')}>
+            <Text style={[styles.loginRegisterText, { color: '#2563EB', fontWeight: '700' }]}>
+              Register Account Biometrics
             </Text>
           </TouchableOpacity>
         </View>

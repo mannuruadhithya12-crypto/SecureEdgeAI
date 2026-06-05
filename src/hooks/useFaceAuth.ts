@@ -87,6 +87,8 @@ export function useFaceAuth(activeUser: { name: string } | null, statusUpdater: 
     setAuthenticatedUser(activeUser.name);
     setAuthScore(bestScore);
 
+    console.log(`[QA] ACTIVE_PROFILE_UPDATED ${activeUser.name}`);
+
     await saveSecuredData(`failed_attempts_${activeUser.name}`, '0');
     setFailedAttempts(prev => ({ ...prev, [activeUser.name]: 0 }));
 

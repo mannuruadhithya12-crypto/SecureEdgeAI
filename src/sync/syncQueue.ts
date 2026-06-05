@@ -100,6 +100,8 @@ export async function enqueueAttendance(record: AttendanceRecord): Promise<void>
   const insertId = await insertQueueItem(binaryPayload, payloadHash);
   if (insertId > 0) {
     console.log(`[SyncQueue] Successfully enqueued attendance for user ${record.userName} (id: ${insertId})`);
+    console.log('[QA] ATTENDANCE_CREATED');
+    console.log('[QA] ATTENDANCE_SAVED');
   } else {
     console.log(`[SyncQueue] Item already existed or failed to insert (insertId: ${insertId})`);
   }

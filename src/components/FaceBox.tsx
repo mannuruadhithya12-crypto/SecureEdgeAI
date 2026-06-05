@@ -29,12 +29,15 @@ const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
  * Supports both real-time detection coordinate mapping and mock status-based styling.
  */
 export const FaceBox: React.FC<FaceBoxProps> = React.memo(({ detection, x, y, width, height, status }) => {
+  // Hooks must be called unconditionally on every render.
+  useEffect(() => {
+    if (detection) {
+      console.log("FaceBox updated:", detection);
+    }
+  }, [detection]);
+
   // 1. Real-time Face Detection Mode (from main)
   if (detection) {
-    useEffect(() => {
-      console.log("FaceBox updated:", detection);
-    }, [detection]);
-
     const boxWidth = detection.width * SCREEN_WIDTH;
     const boxHeight = detection.height * SCREEN_HEIGHT;
 

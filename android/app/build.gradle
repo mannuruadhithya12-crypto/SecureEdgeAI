@@ -89,6 +89,7 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0"
+        resConfigs "en"
     }
     signingConfigs {
         debug {
@@ -123,13 +124,23 @@ android {
         }
     }
     packagingOptions {
+        jniLibs {
+            useLegacyPackaging = true
+        }
         pickFirst "**/libsqlite3.so"
         pickFirst "**/libcrypto.so"
         pickFirst "**/libssl.so"
         resources {
             excludes += [
                 "META-INF/*",
-                "**/*.kotlin_module"
+                "**/*.kotlin_module",
+                "**/LICENSE.txt",
+                "**/LICENSE",
+                "**/NOTICE.txt",
+                "**/NOTICE",
+                "**/README.md",
+                "**/README",
+                "**/DEPENDENCIES"
             ]
         }
     }

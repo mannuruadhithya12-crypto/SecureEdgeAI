@@ -1,13 +1,15 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, Alert } from 'react-native';
 import { ProfileCard } from '../components/ProfileCard';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { theme } from '../theme/theme';
+import { getSecuredData } from '../security/secureStorage';
 
 interface User {
   id: number;
   name: string;
   created_at?: string;
+  employee_id?: string;
 }
 
 interface ProfileScreenProps {
@@ -27,6 +29,25 @@ export function ProfileScreen({
 }: ProfileScreenProps) {
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameInput, setRenameInput] = useState('');
+  const [details, setDetails] = useState<any>(null);
+
+  useEffect(() => {
+    if (activeUser) {
+      const loadDetails = async () => {
+        try {
+          const detailsStr = await getSecuredData('details_' + activeUser.name.toLowerCase());
+          if (detailsStr) {
+            setDetails(JSON.parse(detailsStr));
+          } else {
+            setDetails(null);
+          }
+        } catch {
+          setDetails(null);
+        }
+      };
+      loadDetails();
+    }
+  }, [activeUser]);
 
   if (!activeUser) {
     return (
@@ -43,7 +64,7 @@ export function ProfileScreen({
     );
   }
 
-  const empId = `EMP000${activeUser.id}`;
+  const empId = details?.employeeId || activeUser.employee_id || `EMP000${activeUser.id}`;
   const initialText = activeUser.name.substring(0, 2).toUpperCase();
 
   const handleRename = async () => {
@@ -93,22 +114,22 @@ export function ProfileScreen({
 
       <ProfileCard
         label="Department"
-        value="Engineering Operations"
+        value={details?.department || "Engineering Operations"}
         icon="🏢"
       />
       <ProfileCard
         label="Designation"
-        value="Senior Security Architect"
+        value={details?.designation || "Senior Security Architect"}
         icon="💼"
       />
       <ProfileCard
         label="Secure Contact"
-        value="+91 98765 43210"
+        value={details?.phone || "+91 98765 43210"}
         icon="📞"
       />
       <ProfileCard
         label="Enterprise Email"
-        value={`${activeUser.name.toLowerCase().replace(/\s/g, '')}@secureedge.ai`}
+        value={details?.email || `${activeUser.name.toLowerCase().replace(/\s/g, '')}@secureedge.ai`}
         icon="✉️"
       />
       <ProfileCard

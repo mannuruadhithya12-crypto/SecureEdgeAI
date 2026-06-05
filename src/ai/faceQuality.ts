@@ -178,6 +178,11 @@ export function validateFaceQuality(
   
   qualityScore = Math.max(0.0, Math.min(1.0, qualityScore));
 
+  // Log distance valid when face is at correct proximity
+  if (!tooSmall && !isEmulator) {
+    console.log('[QA] DISTANCE_VALID');
+  }
+
   return {
     qualityScore,
     blurDetected,

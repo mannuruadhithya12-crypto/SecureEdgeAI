@@ -22,31 +22,49 @@ export function useDatabase(statusTextUpdater: (s: string) => void) {
     try {
       const dbUsers = await getAllUsers();
       setUsersList(dbUsers);
-      console.log(`[QA] USERS_FOUND ${dbUsers.length}`);
-      
+      console.log(`[QA] USERS_COUNT ${dbUsers.length}`);
+
       const active = await getSecuredData('active_user_name');
-      console.log(`[QA] ACTIVE_PROFILE_FOUND ${active ?? 'null'}`);
+      console.log(`[QA] ACTIVE_USER ${active ?? 'null'}`);
+
+      let resolvedActive: User | null = null;
       if (active) {
         const found = dbUsers.find(u => u.name === active);
         if (found) {
-          setActiveUser(found);
+          resolvedActive = found;
         } else if (dbUsers.length > 0) {
-          setActiveUser(dbUsers[0]);
+          resolvedActive = dbUsers[0];
         }
       } else if (dbUsers.length > 0) {
-        setActiveUser(dbUsers[0]);
+        resolvedActive = dbUsers[0];
+      }
+
+      if (resolvedActive) {
+        setActiveUser(resolvedActive);
+        console.log(`[QA] ACTIVE_USER_ID ${resolvedActive.id}`);
       }
 
       // Load enrolled embeddings
       const cache: { [username: string]: Float32Array[] } = {};
       let embeddingCount = 0;
+      let activeEmbeddingId: number | null = null;
+
       for (const u of dbUsers) {
         const dbEmbeds = await getEmbeddingsForUser(u.id);
         embeddingCount += dbEmbeds.length;
         cache[u.name] = dbEmbeds.map(e => e.embedding);
+
+        // Track the latest embedding ID for the active user
+        if (resolvedActive && u.id === resolvedActive.id && dbEmbeds.length > 0) {
+          activeEmbeddingId = dbEmbeds[dbEmbeds.length - 1].id;
+        }
       }
       setStoredEmbeddings(cache);
-      console.log(`[QA] EMBEDDINGS_FOUND ${embeddingCount}`);
+      console.log(`[QA] EMBEDDINGS_COUNT ${embeddingCount}`);
+      if (activeEmbeddingId != null) {
+        console.log(`[QA] ACTIVE_EMBEDDING_ID ${activeEmbeddingId}`);
+      }
+
       if (dbUsers.length === 0 && embeddingCount === 0 && active == null) {
         console.log('[QA] CLEAN_STATE_CONFIRMED');
         console.log('[QA] NO_USERS_FOUND');
@@ -99,6 +117,7 @@ export function useDatabase(statusTextUpdater: (s: string) => void) {
   const handleSwitchUser = (user: User) => {
     setActiveUser(user);
     saveSecuredData('active_user_name', user.name);
+    console.log(`[QA] ACTIVE_PROFILE_UPDATED ${user.name}`);
     statusTextUpdater(`Switched active profile to: ${user.name}`);
   };
 
@@ -122,8 +141,8 @@ export function useDatabase(statusTextUpdater: (s: string) => void) {
     }
   };
 
-  const handleCreateUser = async (name: string): Promise<number> => {
-    const result = await createUser(name);
+  const handleCreateUser = async (name: string, employeeId?: string): Promise<number> => {
+    const result = await createUser(name, employeeId);
     await loadAll();
     return result;
   };

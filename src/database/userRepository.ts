@@ -4,16 +4,18 @@ import { encryptData, decryptData } from '../security/encryption';
 export interface User {
   id: number;
   name: string;
+  employee_id?: string;
   created_at: string;
 }
 
-export async function createUser(name: string): Promise<number> {
+export async function createUser(name: string, employeeId?: string): Promise<number> {
   const db = await getDatabase();
   const encryptedName = await encryptData(name);
+  const encryptedEmpId = employeeId ? await encryptData(employeeId) : null;
   const createdAt = new Date().toISOString().split('T')[0];
   const result = await db.executeSql(
-    'INSERT INTO users (name, created_at) VALUES (?, ?);',
-    [encryptedName, createdAt]
+    'INSERT INTO users (name, employee_id, created_at) VALUES (?, ?, ?);',
+    [encryptedName, encryptedEmpId, createdAt]
   );
   
   if (result && result.length > 0) {
@@ -33,9 +35,14 @@ export async function getAllUsers(): Promise<User[]> {
       const row = rows.item(i);
       try {
         const decryptedName = await decryptData(row.name);
+        let decryptedEmpId = undefined;
+        if (row.employee_id) {
+          decryptedEmpId = await decryptData(row.employee_id);
+        }
         users.push({
           id: row.id,
           name: decryptedName,
+          employee_id: decryptedEmpId,
           created_at: row.created_at
         });
       } catch (e) {

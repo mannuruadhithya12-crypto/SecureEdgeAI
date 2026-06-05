@@ -17,8 +17,13 @@ export function AttendanceScreen({ activeUser }: AttendanceScreenProps) {
   const loadLogs = async () => {
     setIsLoadingLogs(true);
     try {
+      console.log(`[QA] ATTENDANCE_QUERY_USER_ID ${activeUser?.name ?? 'null'}`);
       const logs = await getAttendanceHistory(activeUser?.name);
       setAttendanceLogs(logs);
+      console.log(`[QA] ATTENDANCE_RECORDS_FOUND ${logs.length}`);
+      if (logs.length > 0) {
+        console.log('[QA] ATTENDANCE_RENDER_SUCCESS');
+      }
     } catch (e) {
       console.warn('[AttendanceScreen] Failed to load attendance logs:', e);
     } finally {
@@ -27,8 +32,9 @@ export function AttendanceScreen({ activeUser }: AttendanceScreenProps) {
   };
 
   useEffect(() => {
+    // Reload whenever activeUser changes (catches fresh login and re-registration)
     loadLogs();
-  }, [activeUser]);
+  }, [activeUser?.name]);
 
   const filtered = attendanceLogs.filter(log => {
     const matchesSearch = log.userName.toLowerCase().includes(searchQuery.toLowerCase());

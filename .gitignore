@@ -224,6 +224,32 @@ vite.config.ts.timestamp-*
 # Python env
 /tf-env/
 
+# Local untracked duplicates of the project (kept for reference, not part of the build)
+/mobile-app/
+/backend/
+/mobile-app/**/*
+/backend/**/*
+
 # Root screenshots
 /*.png
 
+
+# AI tool configs (not project source code)
+.claude/
+.opencode/
+
+# Editor configs
+.vscode/
+.idea/
+
+# Debug/scratch artifacts
+scratch/
+fp16/
+
+# Debug screenshots (use docs/screenshots/ instead)
+device-screen-pulled.png
+secureedge_screen.png
+
+# Android JVM crash logs
+android/hs_err_pid*.log
+android/replay_pid*.log

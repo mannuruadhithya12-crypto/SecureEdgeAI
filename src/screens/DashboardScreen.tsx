@@ -34,7 +34,8 @@ export function DashboardScreen() {
 
   useEffect(() => {
     loadAll();
-  }, [activeTab]);
+    console.log('[QA] DASHBOARD_LOADED');
+  }, []); // Load once on mount — avoids activeUser becoming stale on tab switches
 
   const tabFadeAnim = useRef(new Animated.Value(1)).current;
 
@@ -55,7 +56,7 @@ export function DashboardScreen() {
   };
 
   const renderHomeTab = () => {
-    const empId = activeUser ? `EMP00${activeUser.id}` : 'EMP12345';
+    const empId = activeUser?.employee_id || (activeUser ? `EMP00${activeUser.id}` : 'EMP12345');
     return (
       <ScrollView contentContainerStyle={styles.scrollPadding} showsVerticalScrollIndicator={false}>
         <UserCard
@@ -77,7 +78,7 @@ export function DashboardScreen() {
         </TouchableOpacity>
 
         <View style={styles.quickGrid}>
-          <TouchableOpacity style={styles.gridItem} onPress={() => navigation.navigate('FaceRegistration')}>
+          <TouchableOpacity style={styles.gridItem} onPress={() => navigation.navigate('FaceRegistration', { activeUser })}>
             <View style={[styles.gridIconCircle, { backgroundColor: 'rgba(16, 185, 129, 0.12)' }]}>
               <Text style={{ fontSize: 22 }}>🟢</Text>
             </View>
@@ -142,7 +143,7 @@ export function DashboardScreen() {
             activeUser={activeUser}
             handleDeleteUser={handleDeleteUser}
             handleRenameUser={handleRenameUser}
-            onRegisterPressed={() => navigation.navigate('FaceRegistration')}
+            onRegisterPressed={() => navigation.navigate('FaceRegistration', { activeUser })}
             loadAll={loadAll}
           />
         )}
