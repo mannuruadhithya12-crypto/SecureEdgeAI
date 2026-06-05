@@ -65,6 +65,34 @@ graph TD
 
 ---
 
+## Screenshots
+
+> Real-device captures from Vivo V2312 (Android 14) running the production release build.
+
+<p align="center">
+  <img src="docs/screenshots/dashboard.jpg" alt="Dashboard" width="220"/>
+  &nbsp;&nbsp;
+  <img src="docs/screenshots/access_granted.jpg" alt="Face Authentication Success" width="220"/>
+  &nbsp;&nbsp;
+  <img src="docs/screenshots/profile.jpg" alt="User Profile" width="220"/>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/settings_preferences.jpg" alt="Settings — Preferences & Biometrics" width="220"/>
+  &nbsp;&nbsp;
+  <img src="docs/screenshots/settings_backup.jpg" alt="Settings — Backup & Database" width="220"/>
+</p>
+
+| Screen | Description |
+|--------|-------------|
+| **Dashboard** | User greeting card, Face Authentication scanner, quick-access grid (Register Face, View Profile, Attendance, OS Hardening), and offline security banner. |
+| **Access Granted** | Post-authentication confirmation with employee ID, timestamp, and local sync status. |
+| **Profile** | Full employee profile with department, designation, secure contact, enterprise email, and enrollment date. |
+| **Settings (Preferences)** | Dark theme toggle, performance telemetry, active camera selector, inference FPS limit, emulator mode, and security lockouts. |
+| **Settings (Backup)** | AES-encrypted database backup/restore controls with timestamp and file size, plus system reset options. |
+
+---
+
 ## Performance Benchmarks
 
 | Metric | Target | Achieved |
