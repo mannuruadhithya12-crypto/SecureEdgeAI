@@ -1,3 +1,4 @@
+/* eslint-env jest */
 jest.mock('react-native-vision-camera', () => {
   const React = require('react');
   const Camera = React.forwardRef((props, ref) => {

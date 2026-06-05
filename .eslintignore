@@ -2,5 +2,7 @@ tf-env/
 node_modules/
 android/
 ios/
+backend/
+mobile-app/
 **/node_modules/
 **/tf-env/
